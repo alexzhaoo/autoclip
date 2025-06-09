@@ -1,0 +1,7 @@
+clips/
+downloads/
+srts/
+transcripts/
+venv/
+gpt_response.txt
+.env
