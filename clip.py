@@ -195,10 +195,13 @@ def generate_srt_from_whisper_segments(segments, output_file="captions.srt"):
 
 def overlay_captions(video_file, srt_file, output_file):
     speaker_x = detect_speaker_center(video_file)
-    crop_x = max(0, speaker_x - 360)  # center 720px around speaker
-
-    vf_filter = f"scale=-1:1280,crop=720:1280:{crop_x}:0,subtitles={srt_file}"
-
+    crop_x = max(0, speaker_x - 540)  # center 1080px around speaker
+    srt_file_abs = os.path.abspath(srt_file)
+    vf_filter = (
+        f"scale=-1:1920,"  # scale height to 1920, width auto
+        f"crop=1080:1920:{crop_x}:0,"  # crop to 1080x1920, centered on speaker
+        f"subtitles='{srt_file_abs}'"
+    )
     cmd = [
         "ffmpeg", "-y",
         "-hwaccel", "cuda",
