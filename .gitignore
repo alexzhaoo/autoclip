@@ -5,3 +5,5 @@ transcripts/
 venv/
 gpt_response.txt
 .env
+cookies.txt
+final_clips.json

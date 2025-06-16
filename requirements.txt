@@ -1,7 +1,7 @@
 openai
-whisper 
 moviepy
 torch
 python-dotenv
 yt-dlp
 tqdm
+mediapipe

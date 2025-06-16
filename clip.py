@@ -195,13 +195,14 @@ def generate_srt_from_whisper_segments(segments, output_file="captions.srt"):
 
 def overlay_captions(video_file, srt_file, output_file):
     speaker_x = detect_speaker_center(video_file)
-    crop_x = max(0, speaker_x - 540)  # center 1080px around speaker
-    srt_file_abs = os.path.abspath(srt_file)
+    crop_x = max(0, speaker_x - 540)  
+    srt_file_abs = os.path.abspath(srt_file).replace('\\', '/').replace(':', '\\:')  # Escape colons for ffmpeg
     vf_filter = (
-        f"scale=-1:1920,"  # scale height to 1920, width auto
-        f"crop=1080:1920:{crop_x}:0,"  # crop to 1080x1920, centered on speaker
-        f"subtitles='{srt_file_abs}'"
+        f"scale=-1:1920,"
+        f"crop=1080:1920:{crop_x}:0,"
+        f"subtitles=\"{srt_file_abs}\""
     )
+
     cmd = [
         "ffmpeg", "-y",
         "-hwaccel", "cuda",
@@ -212,7 +213,14 @@ def overlay_captions(video_file, srt_file, output_file):
         "-c:a", "copy",
         output_file
     ]
-    subprocess.run(cmd)
+    print(vf_filter)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        print(f"FFmpeg error for {output_file}:\n{result.stderr}")
+        if os.path.exists(output_file):
+            os.remove(output_file)  # clean up bad file
+        return None
+
 
     
 def detect_speaker_center(video_path):
@@ -259,10 +267,10 @@ def download_youtube_video(url, output_path="downloads"):
     output_template = os.path.join(output_path, "%(title).40s.%(ext)s")
 
     ydl_opts = {
+        'cookiefile': 'cookies.txt',
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
-        'quiet': False,
     }
 
     print(f"📥 Downloading from YouTube: {url}")
