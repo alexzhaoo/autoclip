@@ -370,108 +370,108 @@ def add_offset_to_hms(hms, offset_sec):
 def main(video_path):
     #TODO COMMENT IN AND OUT WHILE TESTING
     print("[1] Transcribing...")
-    transcript, segments = transcribe(video_path)
+    # transcript, segments = transcribe(video_path)
     
-    # with open('transcripts/transcript.txt', encoding='utf-8') as f:
-    #     transcript = f.read()
-    # with open(os.path.join(TRANSCRIPTS_DIR, "segments.json"), "r", encoding="utf-8") as f:
-    #     segments = json.load(f)
+    with open('transcripts/transcript.txt', encoding='utf-8') as f:
+        transcript = f.read()
+    with open(os.path.join(TRANSCRIPTS_DIR, "segments.json"), "r", encoding="utf-8") as f:
+        segments = json.load(f)
 
     print("[2] Chunking transcript for first-pass extraction...")
     chunks = chunk_transcript(segments, chunk_duration=600)
 
-    all_candidate_clips = []
-    for i, chunk in enumerate(tqdm(chunks, desc="Chunk Pass ")):
-        chunk_text = extract_transcript_text(chunk)
-        print(f"🔍 Extracting from chunk {i+1}")
+    # all_candidate_clips = []
+    # for i, chunk in enumerate(tqdm(chunks, desc="Chunk Pass ")):
+    #     chunk_text = extract_transcript_text(chunk)
+    #     print(f"🔍 Extracting from chunk {i+1}")
 
-        raw_clips = extract_clips(chunk_text, i)  # Can return dict or list
-        chunk_start_sec = chunk[0]["start"] if chunk else 0
+    #     raw_clips = extract_clips(chunk_text, i)  # Can return dict or list
+    #     chunk_start_sec = chunk[0]["start"] if chunk else 0
 
-        # Handle both formats: dict with 'clips' or raw list
-        if isinstance(raw_clips, dict) and "clips" in raw_clips:
-            clips = raw_clips["clips"]
-        elif isinstance(raw_clips, list):
-            clips = raw_clips
-        else:
-            print(f"⚠️ Unexpected clip format in chunk {i+1}")
-            clips = []
+    #     # Handle both formats: dict with 'clips' or raw list
+    #     if isinstance(raw_clips, dict) and "clips" in raw_clips:
+    #         clips = raw_clips["clips"]
+    #     elif isinstance(raw_clips, list):
+    #         clips = raw_clips
+    #     else:
+    #         print(f"⚠️ Unexpected clip format in chunk {i+1}")
+    #         clips = []
 
-        for clip in clips:
-            # Add chunk start time to each clip
-            clip_start_hms = add_offset_to_hms(clip["start"], chunk_start_sec)
-            clip_end_hms = add_offset_to_hms(clip["end"], chunk_start_sec)
-            clip_start_sec = hms_to_sec(clip_start_hms)
-            clip_end_sec = hms_to_sec(clip_end_hms)
+    #     for clip in clips:
+    #         # Add chunk start time to each clip
+    #         clip_start_hms = add_offset_to_hms(clip["start"], chunk_start_sec)
+    #         clip_end_hms = add_offset_to_hms(clip["end"], chunk_start_sec)
+    #         clip_start_sec = hms_to_sec(clip_start_hms)
+    #         clip_end_sec = hms_to_sec(clip_end_hms)
 
-            clip_segment_text = [
-                s["text"]
-                for s in segments
-                if s["start"] < clip_end_sec and s["end"] > clip_start_sec
-            ]
-            clip["transcript_text"] = " ".join(clip_segment_text)
-            clip["start_sec"] = clip_start_sec
-            clip["end_sec"] = clip_end_sec
-            clip["start"] = clip_start_hms
-            clip["end"] = clip_end_hms
+    #         clip_segment_text = [
+    #             s["text"]
+    #             for s in segments
+    #             if s["start"] < clip_end_sec and s["end"] > clip_start_sec
+    #         ]
+    #         clip["transcript_text"] = " ".join(clip_segment_text)
+    #         clip["start_sec"] = clip_start_sec
+    #         clip["end_sec"] = clip_end_sec
+    #         clip["start"] = clip_start_hms
+    #         clip["end"] = clip_end_hms
 
-        if clips:
-            all_candidate_clips.extend(clips)
-        else:
-            print(f"⚠️ No valid clips extracted for chunk {i+1}")
+    #     if clips:
+    #         all_candidate_clips.extend(clips)
+    #     else:
+    #         print(f"⚠️ No valid clips extracted for chunk {i+1}")
 
-    print(f"[3] Reranking {len(all_candidate_clips)} clips by viral potential...")
+    # print(f"[3] Reranking {len(all_candidate_clips)} clips by viral potential...")
 
-    MAX_CLIPS_FOR_RERANK = 30
-    if len(all_candidate_clips) > MAX_CLIPS_FOR_RERANK:
-        print(f"⚠️ Too many candidate clips ({len(all_candidate_clips)}), truncating to {MAX_CLIPS_FOR_RERANK} for reranking.")
-        all_candidate_clips = all_candidate_clips[:MAX_CLIPS_FOR_RERANK]
-    rerank_prompt = f"""
-    You are an expert short-form video editor. Given a list of clips, rerank them by their potential to go viral. Consider the *hook*, *caption*, and the full *transcript text* of the moment.
+    # MAX_CLIPS_FOR_RERANK = 30
+    # if len(all_candidate_clips) > MAX_CLIPS_FOR_RERANK:
+    #     print(f"⚠️ Too many candidate clips ({len(all_candidate_clips)}), truncating to {MAX_CLIPS_FOR_RERANK} for reranking.")
+    #     all_candidate_clips = all_candidate_clips[:MAX_CLIPS_FOR_RERANK]
+    # rerank_prompt = f"""
+    # You are an expert short-form video editor. Given a list of clips, rerank them by their potential to go viral. Consider the *hook*, *caption*, and the full *transcript text* of the moment.
 
-    Your ranking should reflect:
-    - Entertainment value
-    - Uniqueness or surprise
-    - Emotional or intellectual impact
-    - TikTok/Reels virality potential
+    # Your ranking should reflect:
+    # - Entertainment value
+    # - Uniqueness or surprise
+    # - Emotional or intellectual impact
+    # - TikTok/Reels virality potential
 
-    Only return the top 6.
+    # Only return the top 6.
 
-    Format:
-    [
-    {{
-        "start": "HH:MM:SS",
-        "end": "HH:MM:SS",
-        "hook": "...",
-        "caption": "...",
-        "transcript_text": "..."
-    }},
-    ...
-    ]
+    # Format:
+    # [
+    # {{
+    #     "start": "HH:MM:SS",
+    #     "end": "HH:MM:SS",
+    #     "hook": "...",
+    #     "caption": "...",
+    #     "transcript_text": "..."
+    # }},
+    # ...
+    # ]
 
-    Clips:
-    {json.dumps(all_candidate_clips, indent=2)}
-    """
+    # Clips:
+    # {json.dumps(all_candidate_clips, indent=2)}
+    # """
 
 
-    response = client.chat.completions.create(
-        model="o4-mini-2025-04-16",
-        messages=[
-            {"role": "system", "content": "You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
-            {"role": "user", "content": rerank_prompt}
-        ]
-    )
+    # response = client.chat.completions.create(
+    #     model="o4-mini-2025-04-16",
+    #     messages=[
+    #         {"role": "system", "content": "You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
+    #         {"role": "user", "content": rerank_prompt}
+    #     ]
+    # )
 
-    try:
-        final_clips = safe_parse_gpt_response(response.choices[0].message.content)
-        with open("final_clips.json", "w", encoding="utf-8") as f:
-            f.write(json.dumps(final_clips, indent=2, ensure_ascii=False))
-    except Exception as e:
-        print("❌ GPT Rerank response parsing failed:", e)
-        print(response.choices[0].message.content)
-        final_clips = []
+    # try:
+    #     final_clips = safe_parse_gpt_response(response.choices[0].message.content)
+    #     with open("final_clips.json", "w", encoding="utf-8") as f:
+    #         f.write(json.dumps(final_clips, indent=2, ensure_ascii=False))
+    # except Exception as e:
+    #     print("❌ GPT Rerank response parsing failed:", e)
+    #     print(response.choices[0].message.content)
+    #     final_clips = []
 
-    print(f"[4] Final selected clips: {len(final_clips)}")
+    # print(f"[4] Final selected clips: {len(final_clips)}")
 
     final_clips = json.load(open("final_clips.json", "r", encoding="utf-8"))
     for i, clip in enumerate(tqdm(final_clips, desc="Processing final clips")):
@@ -498,10 +498,10 @@ def main(video_path):
 
 
 if __name__ == "__main__":
-    input_source = 'https://www.youtube.com/watch?v=d7sUWwHugg8&t=321s'
-    if input_source.startswith("http://") or input_source.startswith("https://"):
-        video_path = download_youtube_video(input_source)
-    else:
-        video_path = input_source
-
-    main(video_path)
+    # input_source = 'https://www.youtube.com/watch?v=d7sUWwHugg8&t=321s'
+    # if input_source.startswith("http://") or input_source.startswith("https://"):
+    #     video_path = download_youtube_video(input_source)
+    # else:
+    #     video_path = input_source
+    file_path = "C:/Users/zhaot/Documents/You've Been Programmed To .mp4"
+    main(r"C:\Users\zhaot\Documents\Projects\autoclipper\downloads\Joe Dispenza： You've Been Programmed To .mp4")
