@@ -6,7 +6,7 @@ venv/
 gpt_response.txt
 .env
 cookies.txt
-final_clips.json
+final_clips.jsonl
 captions
 gpt_response0.txt
 gpt_response1.txt
@@ -16,4 +16,14 @@ gpt_response4.txt
 gpt_response5.txt
 gpt_response6.txt
 gpt_response7.txt
+gpt_response8.txt
+gpt_response9.txt
+gpt_response10.txt
+gpt_response11.txt
+gpt_response12.txt
+gpt_response13.txt
+gpt_response14.txt
+gpt_response15.txt
+gpt_response16.txt
+
 final_clips.json

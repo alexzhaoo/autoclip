@@ -247,17 +247,26 @@ def wrap_text(text, max_words=2):
 
 
 def overlay_captions(video_file, ass_file, output_file):
+    # Get input video dimensions
+    cap = cv2.VideoCapture(video_file)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    # Set crop size to not exceed video dimensions
+    pre_crop_width = min(1400, width)
+    pre_crop_height = min(1920, height)
     speaker_x = detect_speaker_center(video_file)
-    pre_crop_width = 1400  # Show more horizontal area (zoom out effect)
-    crop_x = max(0, speaker_x - pre_crop_width // 2)
+    crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
+    crop_y = 0  # You can adjust this if you want vertical centering
 
     # Convert ASS file path to FFmpeg-safe format
     ass_file_abs = os.path.abspath(ass_file)
     ass_file_ffmpeg = ass_file_abs.replace('\\', '/').replace(':', '\\\\:')
 
-    # FFmpeg video filter: wider crop -> upscale to 4K vertical -> overlay ASS
+    # FFmpeg video filter: crop -> upscale -> overlay ASS
     vf_filter = (
-        f"crop={pre_crop_width}:1920:{crop_x}:0,"
+        f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
         f"scale=2160:3840,"
         f"ass={ass_file_ffmpeg}"
     )
@@ -268,11 +277,11 @@ def overlay_captions(video_file, ass_file, output_file):
         "-i", video_file,
         "-vf", vf_filter,
         "-c:v", "h264_nvenc",
-        "-preset", "slow",              # Better compression quality
-        "-b:v", "12M",                  # High bitrate for quality retention
+        "-preset", "slow",
+        "-b:v", "12M",
         "-c:a", "aac",
         "-b:a", "192k",
-        "-movflags", "+faststart",     # Optimize for web streaming
+        "-movflags", "+faststart",
         output_file
     ]
 
@@ -498,7 +507,7 @@ def main(video_path):
 
 
 if __name__ == "__main__":
-    input_source = 'https://www.youtube.com/watch?v=d7sUWwHugg8&t=321s'
+    input_source = 'https://www.youtube.com/watch?v=hCW2NHbWNwA&t=327s'
     if input_source.startswith("http://") or input_source.startswith("https://"):
         video_path = download_youtube_video(input_source)
     else:
