@@ -32,7 +32,7 @@ client = OpenAI(
 )
 
 #TODO COMMENT IN AND OUT WHILE TESTING
-model = whisper.load_model("small")
+model = whisper.load_model("medium.en", device="cuda" if torch.cuda.is_available() else "cpu")
 
 import json
 import re
@@ -73,55 +73,58 @@ def transcribe(video_path):
     return result["text"], result.get("segments", [])
 
 
-def extract_clips(transcript, var ,max_clips=5):
+def extract_clips(transcript, var ,max_clips=8):
     # Truncate transcript at the last sentence before 5000 chars
     prompt = f"""
 
+        From the transcript below, extract {max_clips} short clips (each under 60 seconds) that are likely to perform well on TikTok or Instagram Reels.
 
-    From the transcript below
-    Extract {max_clips} short clips (each under 60 seconds) from the transcript that could
-      stand alone on platforms like TikTok or Instagram Reels.
+        Each clip must be completely self-contained:
+        - Start at the **beginning of a complete sentence or clear idea**
+        - Include enough **setup/context** in the first few seconds so the viewer understands what’s happening
+        - End cleanly without cutting someone off mid-thought
 
-    A good clip must be self-contained: it should include enough context at the start to be understandable without watching the rest of the video.
+        DO NOT start in the middle of a sentence, or pick a moment that’s confusing without prior information.
+        Clips should start as close as possible to the emotionally impactful or insightful moment, while including just enough context to make sense.
 
-    ❗Avoid starting a clip in the middle of a sentence or thought.
+        For example, if a clip ends with “That’s the impact of cortisol,” the clip must begin with the earliest point where cortisol or its symptoms are first mentioned — not at the emotional peak.
 
-    ✅ Example of a good clip:
-    "Most people think multitasking makes them more productive.
-    But research shows the opposite — every time you switch tasks,
-    your brain takes up to 23 minutes to refocus. So when you're 
-    flipping between tabs or checking your phone constantly, you're
-    basically fragmenting your attention. That’s why deep work is 
-    so powerful — uninterrupted focus isn’t just better, it’s a superpower."
+        Always ensure the clip is a **full mini-story**, not just the ending or reaction.
 
-    ❌ Example of a bad clip:
-    "...and that’s why it all comes down to dopamine. Because without it, you’re just not going to feel motivated to do anything."
+        Example clips:
+         GOOD CLIP:
+        "Did you know there's a really fascinating experiment done on weight lifters?
+          They lifted no weights for two weeks. 
+          They just sat there and they visualized themselves lifting weights. They had a 13% increase in muscle mass. 
+        People should realize how much potential they have in their brains."
 
-    ✅ Each moment must:
-    - Start at a **clear narrative or sentence beginning**, not mid-thought
-    - Include enough context in the beginning to **hook** the viewer and make the clip self-contained
-    - Be easy to understand **even without watching prior segments**
-    - Avoid cutting into **half-said ideas**
+         BAD CLIP:
+        "...and that’s why it all comes down to dopamine. Because without it, you’re just not going to feel motivated to do anything."
 
-    🎯 Prioritize:
-    - Interesting facts, unique perspectives, or surprising insights
-    - Emotionally resonant or highly entertaining delivery
-    - “Stop scrolling” moments that deliver value quickly
+         Prioritize clips that:
+        - Contain a surprising fact, bold opinion, or viral insight
+        - Feel emotionally powerful, inspiring, or funny
+        - Could make someone stop scrolling within the first 2–3 seconds
 
-    Format the output as JSON with:
-    - start (HH:MM:SS)
-    - end (HH:MM:SS)
-    - hook (a 1-line opener to grab attention)
-    - caption (3-line, punchy text — keep it tight and readable)
+    
 
+        Return a JSON array like:
+        [
+        {{
+            "start": "HH:MM:SS",
+            "end": "HH:MM:SS",
+            "hook": "1-sentence attention grabber",
+            "caption": "3-line punchy caption"
+        }}
+        ]
 
-    Transcript:
-    {transcript}
-    """
+        Transcript:
+        {transcript}
+        """
 
 
     response = client.chat.completions.create(
-        model="o4-mini-2025-04-16",
+        model="gpt-4.1-2025-04-14",
         messages=[
             {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": prompt}
@@ -139,24 +142,45 @@ def extract_clips(transcript, var ,max_clips=5):
         return []
 
 
-def chunk_transcript(segments, chunk_duration=600):
-    """Split transcript segments into chunks of `chunk_duration` seconds."""
+def chunk_transcript(segments, chunk_duration=360, overlap=60):
+    """Split transcript segments into chunks with overlap.
+
+    Args:
+        segments: List of Whisper segments.
+        chunk_duration: Length of each chunk in seconds (default 6 minutes = 360s).
+        overlap: Number of seconds of overlap between chunks.
+
+    Returns:
+        List of chunks (each is a list of segments).
+    """
     chunks = []
     current_chunk = []
-    start_time = 0
+    chunk_start = 0
+    current_time = 0
 
     for seg in segments:
-        if seg["start"] < start_time + chunk_duration:
+        seg_start = seg["start"]
+        seg_end = seg["end"]
+
+        if current_time == 0:
+            current_time = seg_start
+
+        # If the segment fits in the current chunk
+        if seg_end <= chunk_start + chunk_duration:
             current_chunk.append(seg)
         else:
+            # Save current chunk
             chunks.append(current_chunk)
+            # Move chunk start forward with overlap
+            chunk_start += chunk_duration - overlap
+            # Start a new chunk
             current_chunk = [seg]
-            start_time = seg["start"]
 
     if current_chunk:
         chunks.append(current_chunk)
-    
+
     return chunks
+
 
 def extract_transcript_text(segments):
     return " ".join([seg["text"] for seg in segments])
@@ -254,8 +278,10 @@ def overlay_captions(video_file, ass_file, output_file):
     cap.release()
 
     # Set crop size to not exceed video dimensions
-    pre_crop_width = min(1400, width)
     pre_crop_height = min(1920, height)
+    pre_crop_width = int(pre_crop_height * 9 / 16)
+    pre_crop_width = min(pre_crop_width, width)
+
     speaker_x = detect_speaker_center(video_file)
     crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
     crop_y = 0  # You can adjust this if you want vertical centering
@@ -386,6 +412,8 @@ def main(video_path):
     # with open(os.path.join(TRANSCRIPTS_DIR, "segments.json"), "r", encoding="utf-8") as f:
     #     segments = json.load(f)
 
+    segments = [s for s in segments if s["start"] >= 300]
+
     print("[2] Chunking transcript for first-pass extraction...")
     chunks = chunk_transcript(segments, chunk_duration=600)
 
@@ -436,7 +464,9 @@ def main(video_path):
         print(f"⚠️ Too many candidate clips ({len(all_candidate_clips)}), truncating to {MAX_CLIPS_FOR_RERANK} for reranking.")
         all_candidate_clips = all_candidate_clips[:MAX_CLIPS_FOR_RERANK]
     rerank_prompt = f"""
-    You are an expert short-form video editor. Given a list of clips, rerank them by their potential to go viral. Consider the *hook*, *caption*, and the full *transcript text* of the moment.
+    You are an expert short-form video editor. Given a list of clips, rerank them by their potential to go viral. 
+
+    Weigh transcript text heavily in your ranking.
 
     Your ranking should reflect:
     - Entertainment value
@@ -444,7 +474,7 @@ def main(video_path):
     - Emotional or intellectual impact
     - TikTok/Reels virality potential
 
-    Only return the top 6.
+    Only return the top 8.
 
     Format:
     [
@@ -464,7 +494,7 @@ def main(video_path):
 
 
     response = client.chat.completions.create(
-        model="o4-mini-2025-04-16",
+        model="gpt-4.1-2025-04-14",
         messages=[
             {"role": "system", "content": "You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": rerank_prompt}

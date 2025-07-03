@@ -78,50 +78,46 @@ def extract_clips(transcript, var ,max_clips=5):
     prompt = f"""
 
 
-    From the transcript below
-    Extract {max_clips} short clips (each under 60 seconds) from the transcript that could
-      stand alone on platforms like TikTok or Instagram Reels.
+    From the transcript below, extract {max_clips} short clips (each under 60 seconds) that are likely to perform well on TikTok or Instagram Reels.
 
-    A good clip must be self-contained: it should include enough context at the start to be understandable without watching the rest of the video.
+    Each clip must be completely self-contained:
+    - Start at the **beginning of a complete sentence or clear idea**
+    - Include enough **setup/context** in the first few seconds so the viewer understands what’s happening
+    - End cleanly without cutting someone off mid-thought
 
-    ❗Avoid starting a clip in the middle of a sentence or thought.
+    🚫 DO NOT start in the middle of a sentence, or pick a moment that’s confusing without prior information.
 
-    ✅ Example of a good clip:
-    "Most people think multitasking makes them more productive.
-    But research shows the opposite — every time you switch tasks,
-    your brain takes up to 23 minutes to refocus. So when you're 
-    flipping between tabs or checking your phone constantly, you're
-    basically fragmenting your attention. That’s why deep work is 
-    so powerful — uninterrupted focus isn’t just better, it’s a superpower."
+    ✅ GOOD CLIP:
+    "Most people think multitasking makes them more productive. But research shows the opposite — every time you switch tasks, your brain takes up to 23 minutes to refocus. That’s why deep work is a superpower."
 
-    ❌ Example of a bad clip:
+    ❌ BAD CLIP:
     "...and that’s why it all comes down to dopamine. Because without it, you’re just not going to feel motivated to do anything."
 
-    ✅ Each moment must:
-    - Start at a **clear narrative or sentence beginning**, not mid-thought
-    - Include enough context in the beginning to **hook** the viewer and make the clip self-contained
-    - Be easy to understand **even without watching prior segments**
-    - Avoid cutting into **half-said ideas**
+    🎯 Prioritize clips that:
+    - Contain a surprising fact, bold opinion, or viral insight
+    - Feel emotionally powerful, inspiring, or funny
+    - Could make someone stop scrolling within the first 2–3 seconds
 
-    🎯 Prioritize:
-    - Interesting facts, unique perspectives, or surprising insights
-    - Emotionally resonant or highly entertaining delivery
-    - “Stop scrolling” moments that deliver value quickly
+    🧠 Think of it like telling a short, powerful story or insight that needs no introduction.
 
-    Format the output as JSON with:
-    - start (HH:MM:SS)
-    - end (HH:MM:SS)
-    - hook (a 1-line opener to grab attention)
-    - caption (3-line, punchy text — keep it tight and readable)
-
+    Return a JSON array like:
+    [
+    {
+        "start": "HH:MM:SS",
+        "end": "HH:MM:SS",
+        "hook": "1-sentence attention grabber",
+        "caption": "3-line punchy caption"
+    }
+    ]
 
     Transcript:
     {transcript}
+
     """
 
 
     response = client.chat.completions.create(
-        model="o4-mini-2025-04-16",
+        model="gpt-4.1-2025-04-14",
         messages=[
             {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": prompt}
@@ -254,8 +250,10 @@ def overlay_captions(video_file, ass_file, output_file):
     cap.release()
 
     # Set crop size to not exceed video dimensions
-    pre_crop_width = min(1400, width)
     pre_crop_height = min(1920, height)
+    pre_crop_width = int(pre_crop_height * 9 / 16)
+    pre_crop_width = min(pre_crop_width, width)
+
     speaker_x = detect_speaker_center(video_file)
     crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
     crop_y = 0  # You can adjust this if you want vertical centering
@@ -513,4 +511,4 @@ if __name__ == "__main__":
     # else:
     #     video_path = input_source
 
-    main(r"C:\Users\zhaot\Documents\Projects\autoclipper\downloads\Leading Neuroscientist： Stress Leaks Through The Body.mp4")
+    main(r"C:\Users\zhaot\Documents\Projects\autoclipper\downloads\Leading Neuroscientist： Stress Leaks Thr.mp4")
