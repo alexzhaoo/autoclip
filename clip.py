@@ -1,5 +1,6 @@
 import torch
-import whisper
+from faster_whisper import WhisperModel
+
 import subprocess
 import json
 import os
@@ -16,6 +17,12 @@ from tqdm import trange
 import re
 import pysrt
 import pysubs2
+import nltk
+from nltk.tokenize import sent_tokenize
+
+
+
+
 
 load_dotenv()
 
@@ -31,8 +38,8 @@ client = OpenAI(
     api_key = os.getenv("OPENAI_API_KEY")
 )
 
-#TODO COMMENT IN AND OUT WHILE TESTING
-model = whisper.load_model("medium.en", device="cuda" if torch.cuda.is_available() else "cpu")
+
+model = WhisperModel("small.en", device="cuda" if torch.cuda.is_available() else "cpu")
 
 import json
 import re
@@ -58,38 +65,50 @@ def format_time(seconds):
     return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 def transcribe(video_path):
-    result = model.transcribe(video_path, word_timestamps=False)
+    segments, _ = model.transcribe(video_path, word_timestamps=True)
 
+    transcript = ""
+    segments_list = []
+    for segment in segments:
+        segment_dict = {
+            "start": segment.start,
+            "end": segment.end,
+            "text": segment.text,
+            "words": [
+                {
+                    "start": word.start,
+                    "end": word.end,
+                    "word": word.word
+                } for word in segment.words
+            ] if segment.words else []
+        }
+        segments_list.append(segment_dict)
+        transcript += segment.text + " "
 
     transcript_path = os.path.join(TRANSCRIPTS_DIR, "transcript.txt")
     with open(transcript_path, "w", encoding="utf-8") as f:
-        f.write(result["text"])
-
+        f.write(transcript.strip())
 
     segments_path = os.path.join(TRANSCRIPTS_DIR, "segments.json")
     with open(segments_path, "w", encoding="utf-8") as f:
-        json.dump(result.get("segments", []), f, indent=2, ensure_ascii=False)
+        json.dump(segments_list, f, indent=2, ensure_ascii=False)
 
-    return result["text"], result.get("segments", [])
+    return transcript.strip(), segments_list
 
 
 def extract_clips(transcript, var ,max_clips=8):
     # Truncate transcript at the last sentence before 5000 chars
     prompt = f"""
 
-        From the transcript below, extract {max_clips} short clips (each under 60 seconds) that are likely to perform well on TikTok or Instagram Reels.
-
+       From the transcript below, extract {max_clips} short clips (each under 60 seconds) that are likely to perform well on TikTok or Instagram Reels.
+ 
         Each clip must be completely self-contained:
         - Start at the **beginning of a complete sentence or clear idea**
-        - Include enough **setup/context** in the first few seconds so the viewer understands what’s happening
-        - End cleanly without cutting someone off mid-thought
+        - Prefer clips that begin with a strong hook or can grab attention in the first 2 seconds
 
-        DO NOT start in the middle of a sentence, or pick a moment that’s confusing without prior information.
-        Clips should start as close as possible to the emotionally impactful or insightful moment, while including just enough context to make sense.
-
-        For example, if a clip ends with “That’s the impact of cortisol,” the clip must begin with the earliest point where cortisol or its symptoms are first mentioned — not at the emotional peak.
-
-        Always ensure the clip is a **full mini-story**, not just the ending or reaction.
+        For example, if a clip ends with “That’s the impact of cortisol,” 
+        the clip must begin with the earliest point where cortisol or its symptoms are 
+        first mentioned — not at the emotional peak.
 
         Example clips:
          GOOD CLIP:
@@ -106,7 +125,10 @@ def extract_clips(transcript, var ,max_clips=8):
         - Feel emotionally powerful, inspiring, or funny
         - Could make someone stop scrolling within the first 2–3 seconds
 
-    
+        When providing the "transcript_text" for each clip:
+        - Always copy the exact sentences from the transcript provided (verbatim).
+        - Do not rewrite or paraphrase.
+
 
         Return a JSON array like:
         [
@@ -114,7 +136,8 @@ def extract_clips(transcript, var ,max_clips=8):
             "start": "HH:MM:SS",
             "end": "HH:MM:SS",
             "hook": "1-sentence attention grabber",
-            "caption": "3-line punchy caption"
+            "caption": "3-line punchy caption",
+            "transcript_text": "Full transcript text of the clip"
         }}
         ]
 
@@ -125,6 +148,7 @@ def extract_clips(transcript, var ,max_clips=8):
 
     response = client.chat.completions.create(
         model="gpt-4.1-2025-04-14",
+        temperature=0.2,
         messages=[
             {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": prompt}
@@ -140,6 +164,18 @@ def extract_clips(transcript, var ,max_clips=8):
         print("❌ GPT response parsing failed:", e)
         print(response.choices[0].message.content)
         return []
+
+def get_words_in_range(words, clip_start, clip_end):
+    """Extract words from Whisper output within clip boundaries."""
+    return [
+        {
+            "start": w["start"],
+            "end": w["end"],
+            "text": w["word"]
+        }
+        for w in words
+        if clip_start <= w["start"] <= clip_end
+    ]
 
 
 def chunk_transcript(segments, chunk_duration=360, overlap=60):
@@ -183,7 +219,10 @@ def chunk_transcript(segments, chunk_duration=360, overlap=60):
 
 
 def extract_transcript_text(segments):
-    return " ".join([seg["text"] for seg in segments])
+    raw_text = " ".join([seg["text"].strip() for seg in segments])
+    sentences = sent_tokenize(raw_text)
+    return " ".join(sentences)
+
 
     
 
@@ -238,10 +277,11 @@ def generate_subs_from_whisper_segments(segments, output_file="captions.ass"):
 
     subs.styles["Default"] = style
 
-    for seg in segments:
-        start_ms = int(seg['start'] * 1000)
-        end_ms = int(seg['end'] * 1000)
-        words = remove_punctuation(seg['text'].strip()).split()
+    for word in segments:  # Now using words instead of segments
+        start_ms = int(word['start'] * 1000)
+        end_ms = int(word['end'] * 1000)
+        text = remove_punctuation(word['text'].strip())
+        words = text.split()
         chunks = [' '.join(words[i:i+2]) for i in range(0, len(words), 2)]
 
 
@@ -441,12 +481,13 @@ def main(video_path):
             clip_start_sec = hms_to_sec(clip_start_hms)
             clip_end_sec = hms_to_sec(clip_end_hms)
 
-            clip_segment_text = [
-                s["text"]
-                for s in segments
-                if s["start"] < clip_end_sec and s["end"] > clip_start_sec
-            ]
-            clip["transcript_text"] = " ".join(clip_segment_text)
+            # clip_segment_text = [
+            
+            #     s["text"]
+            #     for s in segments
+            #     if s["start"] < clip_end_sec and s["end"] > clip_start_sec
+            # ]
+            # clip["transcript_text"] = " ".join(clip_segment_text)
             clip["start_sec"] = clip_start_sec
             clip["end_sec"] = clip_end_sec
             clip["start"] = clip_start_hms
@@ -459,38 +500,42 @@ def main(video_path):
 
     print(f"[3] Reranking {len(all_candidate_clips)} clips by viral potential...")
 
-    MAX_CLIPS_FOR_RERANK = 30
+    MAX_CLIPS_FOR_RERANK = 120
     if len(all_candidate_clips) > MAX_CLIPS_FOR_RERANK:
         print(f"⚠️ Too many candidate clips ({len(all_candidate_clips)}), truncating to {MAX_CLIPS_FOR_RERANK} for reranking.")
         all_candidate_clips = all_candidate_clips[:MAX_CLIPS_FOR_RERANK]
-    rerank_prompt = f"""
-    You are an expert short-form video editor. Given a list of clips, rerank them by their potential to go viral. 
-
-    Weigh transcript text heavily in your ranking.
-
-    Your ranking should reflect:
-    - Entertainment value
-    - Uniqueness or surprise
-    - Emotional or intellectual impact
-    - TikTok/Reels virality potential
-
-    Only return the top 8.
-
-    Format:
-    [
-    {{
-        "start": "HH:MM:SS",
-        "end": "HH:MM:SS",
-        "hook": "...",
-        "caption": "...",
-        "transcript_text": "..."
-    }},
-    ...
-    ]
-
-    Clips:
-    {json.dumps(all_candidate_clips, indent=2)}
-    """
+    clips_json = json.dumps(all_candidate_clips, indent=2).replace("{", "{{").replace("}", "}}")
+    rerank_prompt = (
+            "You are an elite short-form video editor with a talent for creating **viral, Gen Z-friendly TikToks and Reels**.\n\n"
+            "Your goal is to **RERANK the following clips** by their potential to go viral.\n\n"
+            "✅ **What makes a clip viral** (rank these highest):\n"
+            "- Starts with a **scroll-stopping hook** (bold claim, shocking fact, controversial opinion, or intriguing question).\n"
+            "- Has an **emotional charge** (funny, inspiring, surprising, relatable, or infuriating).\n"
+            "- Works even **out of context** (doesn’t require the whole video to make sense).\n"
+            "- Delivers value **fast** (viewer understands why they should care within 2–3 seconds).\n\n"
+            "❌ **What to deprioritize** (rank these lowest):\n"
+            "- Long, slow setups.\n"
+            "- Clips that require too much context or explanation.\n"
+            "- Passive or generic statements.\n\n"
+            "---\n\n"
+            "🎯 **Important:**\n"
+            "✅ **Reuse the provided \"start\", \"end\", \"hook\", \"caption\", and \"transcript_text\" verbatim. Do not rewrite or edit them.**\n"
+            "Your only task is to **rerank the clips**.\n\n"
+            "---\n\n"
+            "🎯 **Return the top 20 mo st viral clips**\n\n"
+            "Format:\n"
+            "[\n"
+            "{\n"
+            "    \"start\": \"HH:MM:SS\", <-- reuse\n"
+            "    \"end\": \"HH:MM:SS\", <-- reuse\n"
+            "    \"hook\": \"...\",   <-- reuse\n"
+            "    \"caption\": \"...\", <-- reuse\n"
+            "    \"transcript_text\": \"...\" <-- reuse\n"
+            "},\n"
+            "...\n"
+            "]\n\n"
+            "Clips:\n" + clips_json
+        )
 
 
     response = client.chat.completions.create(
@@ -522,10 +567,14 @@ def main(video_path):
         print("[6] Generating captions...")
         start_sec = sum(x * int(t) for x, t in zip([3600, 60, 1], start.split(":")))
         end_sec = sum(x * int(t) for x, t in zip([3600, 60, 1], end.split(":")))
-        clip_segments = [s for s in segments if s['start'] < end_sec and s['end'] > start_sec]
         ass_file = os.path.join(CAPTIONS_DIR, f"clip_{i+1}.ass")
-        generate_subs_from_whisper_segments(clip_segments, ass_file)
-
+        clip_words = []
+        for s in segments:
+            if "words" in s:
+                clip_words.extend(
+                    get_words_in_range(s["words"], start_sec, end_sec)
+                )
+        generate_subs_from_whisper_segments(clip_words, ass_file)
         final_out = os.path.join(CLIPS_DIR, f"clip_{i+1}_captioned.mp4")
         print(f"[7] Overlaying captions on clip {i+1}")
         clip_start_sec = sum(x * int(t) for x, t in zip([3600, 60, 1], clip["start"].split(":")))
