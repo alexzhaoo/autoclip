@@ -599,167 +599,30 @@ def has_extraordinary_word(words_group):
             return True
     return False
 
-def find_text_sequence_in_segments(target_text, all_segments):
+def align_clip_times_to_segments(clip, chunk_segments):
     """
-    Find the best matching sequence of words in transcript segments using fuzzy matching.
-    Uses multiple strategies: exact matching, fuzzy matching, and key phrase detection.
+    Adjust clip's start/end times to absolute times using Whisper word-level timestamps.
     """
-    import re
-    from difflib import SequenceMatcher
-    
-    # Normalize the target text for matching
-    target_words = []
-    for word in target_text.split():
-        clean_word = re.sub(r'[^\w]', '', word.lower())
-        if clean_word and len(clean_word) > 1:  # Skip single letters
-            target_words.append(clean_word)
-    
-    if len(target_words) < 3:
-        return None
-    
-    # Build list of all words with timestamps
-    all_words = []
-    for seg in all_segments:
-        if 'words' in seg and seg['words']:
-            for word_info in seg['words']:
-                clean_word = re.sub(r'[^\w]', '', word_info['word'].lower())
-                if clean_word and len(clean_word) > 1:
-                    all_words.append({
-                        'text': clean_word,
-                        'start': word_info['start'],
-                        'end': word_info['end'],
-                        'original': word_info['word']
-                    })
-    
-    # Strategy 1: Try exact matching first
-    best_match = None
-    best_score = 0
-    
-    for i in range(len(all_words) - len(target_words) + 1):
-        match_score = 0
-        for j in range(len(target_words)):
-            if i + j < len(all_words) and all_words[i + j]['text'] == target_words[j]:
-                match_score += 1
-            else:
-                break
-        
-        score = match_score / len(target_words)
-        if score > best_score:
-            best_match = {
-                'start_index': i,
-                'end_index': i + match_score - 1,
-                'score': score,
-                'matched_words': match_score,
-                'strategy': 'exact'
-            }
-            best_score = score
-    
-    # Strategy 2: If exact matching failed, try fuzzy matching with sliding window
-    if best_score < 0.6:
-        for i in range(len(all_words) - len(target_words) + 1):
-            # Create a window of transcript words
-            window_words = [all_words[i + j]['text'] for j in range(min(len(target_words), len(all_words) - i))]
-            
-            # Use SequenceMatcher for fuzzy comparison
-            target_str = ' '.join(target_words)
-            window_str = ' '.join(window_words)
-            
-            similarity = SequenceMatcher(None, target_str, window_str).ratio()
-            
-            if similarity > best_score:
-                best_match = {
-                    'start_index': i,
-                    'end_index': i + len(window_words) - 1,
-                    'score': similarity,
-                    'matched_words': len(window_words),
-                    'strategy': 'fuzzy'
-                }
-                best_score = similarity
-    
-    # Strategy 3: Key phrase detection - look for distinctive phrases
-    if best_score < 0.5:
-        # Extract key phrases (sequences of 3-5 words)
-        for phrase_len in [5, 4, 3]:
-            if len(target_words) >= phrase_len:
-                for start_idx in range(len(target_words) - phrase_len + 1):
-                    key_phrase = target_words[start_idx:start_idx + phrase_len]
-                    
-                    # Search for this key phrase in transcript
-                    for i in range(len(all_words) - phrase_len + 1):
-                        transcript_phrase = [all_words[i + j]['text'] for j in range(phrase_len)]
-                        
-                        # Check for exact phrase match
-                        if key_phrase == transcript_phrase:
-                            # Expand around the match
-                            expand_start = max(0, i - start_idx)
-                            expand_end = min(len(all_words) - 1, i + phrase_len + (len(target_words) - start_idx - phrase_len))
-                            
-                            score = phrase_len / len(target_words) * 1.2  # Boost for key phrase detection
-                            
-                            if score > best_score:
-                                best_match = {
-                                    'start_index': expand_start,
-                                    'end_index': expand_end,
-                                    'score': score,
-                                    'matched_words': phrase_len,
-                                    'strategy': 'key_phrase'
-                                }
-                                best_score = score
-                            break
-                    
-                    if best_score > 0.7:  # Found good match, stop searching
-                        break
-    
-    # Convert best match to time-based result
+    start_text = clip["transcript_text"].split()[0].lower()
+    end_text = clip["transcript_text"].split()[-1].lower()
 
-    if best_match and best_score >= 0.4:  # Lower threshold for better coverage
-        start_idx = best_match['start_index']
-        end_idx = best_match['end_index']
-        
-        # Extend match to natural sentence boundaries
-        while end_idx < len(all_words) - 1:
-            check_word = all_words[end_idx]['original']
-            if check_word.endswith('.') or check_word.endswith('!') or check_word.endswith('?'):
-                break
-            end_idx += 1
-            if end_idx - start_idx > len(target_words) * 1.5:  # Don't extend too far
-                break
-        
-        return {
-            'start_time': all_words[start_idx]['start'],
-            'end_time': all_words[end_idx]['end'],
-            'confidence': best_score,
-            'matched_words': best_match['matched_words'],
-            'strategy': best_match['strategy']
-        }
-    
-    return None
+    # Find first and last word timestamps
+    start_time = None
+    end_time = None
 
-def align_clip_times_to_segments(clip, all_segments):
-    """
-    Adjust clip's start/end times using improved fuzzy text matching.
-    """
-    # Try to find the text sequence in the segments
-    match = find_text_sequence_in_segments(clip["transcript_text"], all_segments)
-    
-    if match and match['confidence'] >= 0.4:
-        # Use the matched timing
-        start_time = match['start_time']
-        end_time = match['end_time']
-        strategy = match.get('strategy', 'unknown')
-        print(f"  ✅ Found {strategy} match with {match['confidence']:.1%} confidence ({match['matched_words']} words)")
-    else:
-        # Fallback to the original timestamps from the clip
-        if "start" in clip and "end" in clip:
-            start_time = hms_to_sec(clip["start"])
-            end_time = hms_to_sec(clip["end"])
-            print("  ⚠️ Using fallback timing (no precise match found)")
-        else:
-            # Last resort fallback
-            start_time = all_segments[0]["start"] if all_segments else 0
-            end_time = all_segments[-1]["end"] if all_segments else 60
-            print("  ❌ Using default timing")
-    
+    for seg in chunk_segments:
+        for word in seg["words"]:
+            word_text = word["word"].lower().strip(string.punctuation)
+            if start_time is None and word_text == start_text:
+                start_time = word["start"]
+            if word_text == end_text:
+                end_time = word["end"]
+
+    if start_time is None:
+        start_time = chunk_segments[0]["start"]  # fallback
+    if end_time is None:
+        end_time = chunk_segments[-1]["end"]    # fallback
+
     clip["start_sec"] = start_time
     clip["end_sec"] = end_time
     clip["start"] = format_time(start_time)
@@ -948,22 +811,6 @@ def main(video_path):
     # print(f"[4] Final selected clips: {len(final_clips)}")
 
     final_clips = json.load(open("final_clips.json", "r", encoding="utf-8"))
-    
-    # [4.5] Align clips with precise timing before processing
-    print(f"[4.5] Aligning {len(final_clips)} clips with transcript...")
-    aligned_clips = []
-    for i, clip in enumerate(final_clips):
-        print(f"  Aligning clip {i+1}: '{clip['transcript_text'][:50]}...'")
-        aligned_clip = align_clip_times_to_segments(clip, segments)
-        aligned_clips.append(aligned_clip)
-    
-    # Save the aligned clips for reference
-    with open("final_clips_aligned.json", "w", encoding="utf-8") as f:
-        json.dump(aligned_clips, f, indent=2, ensure_ascii=False)
-    print("✅ Aligned clips saved to final_clips_aligned.json")
-    
-    final_clips = aligned_clips  # Use aligned clips for processing
-    
     for i, clip in enumerate(tqdm(final_clips, desc="Processing final clips")):
         start, end = clip["start"], clip["end"]
         out_file = os.path.join(CLIPS_DIR, f"clip_{i+1}.mp4")
@@ -995,19 +842,11 @@ def main(video_path):
                 clip_words.extend(
                     get_words_in_range(s["words"], start_sec, end_sec)
                 )
-        
-        # Adjust word timestamps to be relative to clip start
-        clip_words_adjusted = []
-        for word in clip_words:
-            adjusted_word = word.copy()
-            adjusted_word["start"] = word["start"] - start_sec
-            adjusted_word["end"] = word["end"] - start_sec
-            clip_words_adjusted.append(adjusted_word)
-        
-        generate_subs_from_whisper_segments(clip_words_adjusted, ass_file)
+        generate_subs_from_whisper_segments(clip_words, ass_file)
         final_out = os.path.join(CLIPS_DIR, f"clip_{i+1}_captioned.mp4")
         print(f"[7] Overlaying captions on clip {i+1}")
-        # No need to shift anymore since timestamps are already relative to clip start
+        clip_start_sec = sum(x * int(t) for x, t in zip([3600, 60, 1], clip["start"].split(":")))
+        shift_ass_to_clip_start(ass_file, clip_start_sec)
         overlay_captions(out_file, ass_file, final_out)
 
         # freeze_intro_file = f"clips/clip_{i+1}_intro.mp4"
