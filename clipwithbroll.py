@@ -201,7 +201,7 @@ def extract_clips(transcript, var ,max_clips=8):
 
          BAD CLIP:
         "...and that’s why it all comes down to dopamine. Because without it, you’re just not going to feel motivated to do anything."
-        
+
          Prioritize clips that:
         - Contain a surprising fact, bold opinion, or viral insight
         - Feel emotionally powerful, inspiring, or funny
@@ -211,7 +211,6 @@ def extract_clips(transcript, var ,max_clips=8):
         - Always copy the exact sentences from the transcript provided (verbatim).
         - Do not rewrite or paraphrase.
 
-        Do not be afraid to use emojis in the hook.
 
         Return a JSON array like:
         [
@@ -496,7 +495,7 @@ def is_super_significant_word(word):
     shock_words = {
         'shocking', 'incredible', 'unbelievable', 'amazing', 'insane', 'crazy', 
         'mind-blowing', 'stunning', 'jaw-dropping', 'explosive', 'revolutionary',
-        'groundbreaking', 'breakthrough', 'miracle', 'impossible', 'forbidden', 
+        'groundbreaking', 'breakthrough', 'miracle', 'impossible', 'forbidden', 'women'
     }
     
     # 2. Extreme emotions/reactions

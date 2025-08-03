@@ -1,2 +1,0 @@
-file 'C:/Users/zhaot/Documents/Projects/autoclipper/clips/clip_1_intro_with_captions.mp4'
-file 'C:/Users/zhaot/Documents/Projects/autoclipper/clips/clip_1_captioned.mp4'
