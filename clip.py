@@ -1067,7 +1067,7 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
                 "duration": total_duration - current_time
             })
         
-        print(f"    🎭 Timeline: {len(timeline_segments)} segments")
+        print(f"🎭 Timeline: {len(timeline_segments)} segments")
         
         # Build FFmpeg filter complex for timeline
         filter_parts = []
@@ -1163,12 +1163,12 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
 def main(video_path):
     #TODO COMMENT IN AND OUT WHILE TESTING
     print("[1] Transcribing...")
-    # transcript, segments = transcribe(video_path)
+    transcript, segments = transcribe(video_path)
     
-    with open('transcripts/transcript.txt', encoding='utf-8') as f:
-        transcript = f.read()
-    with open(os.path.join(TRANSCRIPTS_DIR, "segments.json"), "r", encoding="utf-8") as f:
-        segments = json.load(f)
+    # with open('transcripts/transcript.txt', encoding='utf-8') as f:
+    #     transcript = f.read()
+    # with open(os.path.join(TRANSCRIPTS_DIR, "segments.json"), "r", encoding="utf-8") as f:
+    #     segments = json.load(f)
 
     segments = [s for s in segments if s["start"] >= 300]
 
@@ -1177,117 +1177,117 @@ def main(video_path):
 
     all_candidate_clips = []
     #TODO UNCOMMENT LATER
-    # for i, chunk in enumerate(tqdm(chunks, desc="Chunk Pass ")):
-    #     chunk_text = extract_transcript_text(chunk)
-    #     print(f"🔍 Extracting from chunk {i+1}")
+    for i, chunk in enumerate(tqdm(chunks, desc="Chunk Pass ")):
+        chunk_text = extract_transcript_text(chunk)
+        print(f"🔍 Extracting from chunk {i+1}")
 
         
 
-    #     raw_clips = extract_clips(chunk_text, i)  # Can return dict or list
-    #     chunk_start_sec = chunk[0]["start"] if chunk else 0
+        raw_clips = extract_clips(chunk_text, i)  # Can return dict or list
+        chunk_start_sec = chunk[0]["start"] if chunk else 0
 
-    #     # Handle both formats: dict with 'clips' or raw list
-    #     if isinstance(raw_clips, dict) and "clips" in raw_clips:
-    #         clips = raw_clips["clips"]
-    #     elif isinstance(raw_clips, list):
-    #         clips = raw_clips
-    #     else:
-    #         print(f"⚠️ Unexpected clip format in chunk {i+1}")
-    #         clips = []
+        # Handle both formats: dict with 'clips' or raw list
+        if isinstance(raw_clips, dict) and "clips" in raw_clips:
+            clips = raw_clips["clips"]
+        elif isinstance(raw_clips, list):
+            clips = raw_clips
+        else:
+            print(f"⚠️ Unexpected clip format in chunk {i+1}")
+            clips = []
 
-    #     for clip in clips:
-    #         # Add chunk start time to each clip
-    #         clip = align_clip_times_to_segments(clip, chunk)
+        for clip in clips:
+            # Add chunk start time to each clip
+            clip = align_clip_times_to_segments(clip, chunk)
 
-    #         # clip_segment_text = [
+            # clip_segment_text = [
             
-    #         #     s["text"]
-    #         #     for s in segments
-    #         #     if s["start"] < clip_end_sec and s["end"] > clip_start_sec
-    #         # ]
-    #         # clip["transcript_text"] = " ".join(clip_segment_text)
+            #     s["text"]
+            #     for s in segments
+            #     if s["start"] < clip_end_sec and s["end"] > clip_start_sec
+            # ]
+            # clip["transcript_text"] = " ".join(clip_segment_text)
 
 
-    #     if clips:
-    #         all_candidate_clips.extend(clips)
-    #     else:
-    #         print(f"⚠️ No valid clips extracted for chunk {i+1}")
+        if clips:
+            all_candidate_clips.extend(clips)
+        else:
+            print(f"⚠️ No valid clips extracted for chunk {i+1}")
 
-    # print(f"[3] Reranking {len(all_candidate_clips)} clips by viral potential...")
+    print(f"[3] Reranking {len(all_candidate_clips)} clips by viral potential...")
 
-    # MAX_CLIPS_FOR_RERANK = 120
-    # if len(all_candidate_clips) > MAX_CLIPS_FOR_RERANK:
-    #     print(f"⚠️ Too many candidate clips ({len(all_candidate_clips)}), truncating to {MAX_CLIPS_FOR_RERANK} for reranking.")
-    #     all_candidate_clips = all_candidate_clips[:MAX_CLIPS_FOR_RERANK]
-    # clips_json = json.dumps(all_candidate_clips, indent=2).replace("{", "{{").replace("}", "}}")
-    # rerank_prompt = (
-    #         "You are an elite short-form video editor with a talent for creating **viral, Gen Z-friendly TikToks and Reels**.\n\n"
-    #         "Your goal is to **RERANK the following clips** by their potential to go viral.\n\n"
-    #         "✅ **What makes a clip viral** (rank these highest):\n"
-    #         "- Starts with a **scroll-stopping hook** (bold claim, shocking fact, controversial opinion, or intriguing question).\n"
-    #         "- Has an **emotional charge** (funny, inspiring, surprising, relatable, or infuriating).\n"
-    #         "- Works even **out of context** (doesn’t require the whole video to make sense).\n"
-    #         "- Delivers value **fast** (viewer understands why they should care within 2–3 seconds).\n\n"
-    #         "❌ **What to deprioritize** (rank these lowest):\n"
-    #         "- Long, slow setups.\n"
-    #         "- Clips that require too much context or explanation.\n"
-    #         "- Passive or generic statements.\n\n"
-    #         "---\n\n"
-    #         "🎯 **Important:**\n"
-    #         "✅ **Reuse the provided \"start\", \"end\", \"hook\", \"caption\", and \"transcript_text\" verbatim. Do not rewrite or edit them.**\n"
-    #         "Your only task is to **rerank the clips**.\n\n"
-    #         "---\n\n"
-    #         "🎯 **Return the top 20 mo st viral clips**\n\n"
-    #         "Format:\n"
-    #         "[\n"
-    #         "{\n"
-    #         "    \"start\": \"HH:MM:SS\", <-- reuse\n"
-    #         "    \"end\": \"HH:MM:SS\", <-- reuse\n"
-    #         "    \"hook\": \"...\",   <-- reuse\n"
-    #         "    \"caption\": \"...\", <-- reuse\n"
-    #         "    \"transcript_text\": \"...\" <-- reuse\n"
-    #         "},\n"
-    #         "...\n"
-    #         "]\n\n"
-    #         "Clips:\n" + clips_json
-    #     )
+    MAX_CLIPS_FOR_RERANK = 120
+    if len(all_candidate_clips) > MAX_CLIPS_FOR_RERANK:
+        print(f"⚠️ Too many candidate clips ({len(all_candidate_clips)}), truncating to {MAX_CLIPS_FOR_RERANK} for reranking.")
+        all_candidate_clips = all_candidate_clips[:MAX_CLIPS_FOR_RERANK]
+    clips_json = json.dumps(all_candidate_clips, indent=2).replace("{", "{{").replace("}", "}}")
+    rerank_prompt = (
+            "You are an elite short-form video editor with a talent for creating **viral, Gen Z-friendly TikToks and Reels**.\n\n"
+            "Your goal is to **RERANK the following clips** by their potential to go viral.\n\n"
+            "✅ **What makes a clip viral** (rank these highest):\n"
+            "- Starts with a **scroll-stopping hook** (bold claim, shocking fact, controversial opinion, or intriguing question).\n"
+            "- Has an **emotional charge** (funny, inspiring, surprising, relatable, or infuriating).\n"
+            "- Works even **out of context** (doesn’t require the whole video to make sense).\n"
+            "- Delivers value **fast** (viewer understands why they should care within 2–3 seconds).\n\n"
+            "❌ **What to deprioritize** (rank these lowest):\n"
+            "- Long, slow setups.\n"
+            "- Clips that require too much context or explanation.\n"
+            "- Passive or generic statements.\n\n"
+            "---\n\n"
+            "🎯 **Important:**\n"
+            "✅ **Reuse the provided \"start\", \"end\", \"hook\", \"caption\", and \"transcript_text\" verbatim. Do not rewrite or edit them.**\n"
+            "Your only task is to **rerank the clips**.\n\n"
+            "---\n\n"
+            "🎯 **Return the top 20 mo st viral clips**\n\n"
+            "Format:\n"
+            "[\n"
+            "{\n"
+            "    \"start\": \"HH:MM:SS\", <-- reuse\n"
+            "    \"end\": \"HH:MM:SS\", <-- reuse\n"
+            "    \"hook\": \"...\",   <-- reuse\n"
+            "    \"caption\": \"...\", <-- reuse\n"
+            "    \"transcript_text\": \"...\" <-- reuse\n"
+            "},\n"
+            "...\n"
+            "]\n\n"
+            "Clips:\n" + clips_json
+        )
 
 
-    # response = client.chat.completions.create(
-    #     model="gpt-4.1-2025-04-14",
-    #     messages=[
-    #         {"role": "system", "content": "You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
-    #         {"role": "user", "content": rerank_prompt}
-    #     ]
-    # )
+    response = client.chat.completions.create(
+        model="gpt-4.1-2025-04-14",
+        messages=[
+            {"role": "system", "content": "You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
+            {"role": "user", "content": rerank_prompt}
+        ]
+    )
 
-    # try:
-    #     final_clips = safe_parse_gpt_response(response.choices[0].message.content)
-    #     with open("final_clips.json", "w", encoding="utf-8") as f:
-    #         f.write(json.dumps(final_clips, indent=2, ensure_ascii=False))
-    # except Exception as e:
-    #     print("❌ GPT Rerank response parsing failed:", e)
-    #     print(response.choices[0].message.content)
-    #     final_clips = []
+    try:
+        final_clips = safe_parse_gpt_response(response.choices[0].message.content)
+        with open("final_clips.json", "w", encoding="utf-8") as f:
+            f.write(json.dumps(final_clips, indent=2, ensure_ascii=False))
+    except Exception as e:
+        print("❌ GPT Rerank response parsing failed:", e)
+        print(response.choices[0].message.content)
+        final_clips = []
 
-    # print(f"[4] Final selected clips: {len(final_clips)}")
+    print(f"[4] Final selected clips: {len(final_clips)}")
 
-    # final_clips = json.load(open("final_clips.json", "r", encoding="utf-8"))
+    final_clips = json.load(open("final_clips.json", "r", encoding="utf-8"))
     
-    # [4.5] Align clips with precise timing before processing
-    # print(f"[4.5] Aligning {len(final_clips)} clips with transcript...")
-    # aligned_clips = []
-    # for i, clip in enumerate(final_clips):
-    #     print(f"  Aligning clip {i+1}: '{clip['transcript_text'][:50]}...'")
-    #     aligned_clip = align_clip_times_to_segments(clip, segments)
-    #     aligned_clips.append(aligned_clip)
+  
+    print(f"[4.5] Aligning {len(final_clips)} clips with transcript...")
+    aligned_clips = []
+    for i, clip in enumerate(final_clips):
+        print(f"  Aligning clip {i+1}: '{clip['transcript_text'][:50]}...'")
+        aligned_clip = align_clip_times_to_segments(clip, segments)
+        aligned_clips.append(aligned_clip)
     
-    # # Save the aligned clips for reference
-    # with open("final_clips_aligned.json", "w", encoding="utf-8") as f:
-    #     json.dump(aligned_clips, f, indent=2, ensure_ascii=False)
-    # print("✅ Aligned clips saved to final_clips_aligned.json")
+    # Save the aligned clips for reference
+    with open("final_clips_aligned.json", "w", encoding="utf-8") as f:
+        json.dump(aligned_clips, f, indent=2, ensure_ascii=False)
+    print("✅ Aligned clips saved to final_clips_aligned.json")
     
-    # final_clips = aligned_clips  # Use aligned clips for processing
+    final_clips = aligned_clips  # Use aligned clips for processing
 
     final_clips = json.load(open("final_clips_aligned.json", "r", encoding="utf-8"))
 

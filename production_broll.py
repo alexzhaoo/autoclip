@@ -35,14 +35,10 @@ class ProductionBRollAnalyzer:
     """Enhanced B-roll analyzer with proven GPT integration"""
     
     def __init__(self):
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            print("⚠️ OPENAI_API_KEY not set. Using mock mode for testing.")
-            self.client = None
-            self.mock_mode = True
-        else:
-            self.client = OpenAI(api_key=api_key)
-            self.mock_mode = False
+        self.client = OpenAI(
+            api_key = os.getenv("OPENAI_API_KEY")
+        )
+        self.mock_mode = False
     
     def analyze_content_for_broll(self, segments: List[Dict]) -> List[BRollRegion]:
         """Analyze content using proven GPT method to identify B-roll opportunities"""
@@ -109,7 +105,7 @@ class ProductionBRollAnalyzer:
         
         # Enhanced prompt based on our successful tests
         prompt = f"""
-        Analyze this educational video transcript and identify 2-3 specific moments where B-roll footage would enhance viewer engagement.
+        Analyze this educational video transcript and identify 3-4 specific moments where B-roll footage would enhance viewer engagement.
 
         TRANSCRIPT:
         {transcript_text}
@@ -284,12 +280,13 @@ class ProductionVideoGenerator:
             try:
                 from fast_broll import FastLocalGenerator
                 self.fast_generator = FastLocalGenerator()
-                print("✅ Fast local generator initialized")
+                print("✅ Fast local generator loaded")
             except ImportError:
-                print("⚠️ Fast local generator not available")
+                print("⚠️ Fast local generator not available (fast_broll module not found)")
         
         print("🎬 Production generator ready:")
         print(f"  - Vast.ai endpoint: {'✅ Configured' if vast_ai_endpoint else '❌ Not set'}")
+        print(f"  - Fast local generator: {'✅ Available' if self.fast_generator else '❌ Not available'}")
         print(f"  - Fallback mode: {fallback_mode}")
     
     def generate_broll_video(self, prompt: str, duration: float, output_path: str, 
