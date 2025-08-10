@@ -4,6 +4,7 @@ from faster_whisper import WhisperModel
 import subprocess
 import json
 import os
+import shutil
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -21,12 +22,17 @@ import nltk
 from nltk.tokenize import sent_tokenize
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
-import string
 from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
-import subprocess
 
-
+# B-roll integration
+try:
+    from production_broll import ProductionBRollPipeline
+    BROLL_AVAILABLE = True
+    print("🎬 B-roll system available")
+except ImportError:
+    BROLL_AVAILABLE = False
+    print("⚠️ B-roll system not available (production_broll.py not found)")
 
 
 
@@ -35,9 +41,11 @@ load_dotenv()
 CLIPS_DIR = "clips"
 CAPTIONS_DIR = "captions"
 TRANSCRIPTS_DIR = "transcripts"
+BROLL_DIR = "broll"  # New directory for B-roll videos
 os.makedirs(CLIPS_DIR, exist_ok=True)
 os.makedirs(CAPTIONS_DIR, exist_ok=True)
 os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
+os.makedirs(BROLL_DIR, exist_ok=True)  # Create B-roll directory
 
 
 client = OpenAI(
@@ -48,6 +56,16 @@ client = OpenAI(
 elevenlabs = ElevenLabs(
   api_key= os.getenv("ELEVENLABS_API_KEY"),
 )
+
+# Initialize B-roll pipeline
+broll_pipeline = None
+if BROLL_AVAILABLE:
+    try:
+        broll_pipeline = ProductionBRollPipeline()
+        print("✅ B-roll pipeline initialized")
+    except Exception as e:
+        print(f"⚠️ B-roll pipeline initialization failed: {e}")
+        BROLL_AVAILABLE = False
 model = WhisperModel("small.en", device="cuda" if torch.cuda.is_available() else "cpu")
 
 import json
@@ -435,28 +453,43 @@ def overlay_captions(video_file, ass_file, output_file):
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    # Set crop size to not exceed video dimensions
-    pre_crop_height = min(1920, height)
-    pre_crop_width = int(pre_crop_height * 9 / 16)
-    pre_crop_width = min(pre_crop_width, width)
-
-    speaker_x = detect_speaker_center(video_file)
-    crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
-    crop_y = 0  # You can adjust this if you want vertical centering
-
     # Convert ASS file path to FFmpeg-safe format
     ass_file_abs = os.path.abspath(ass_file)
     ass_file_ffmpeg = ass_file_abs.replace('\\', '/').replace(':', '\\\\:')
 
-    # FFmpeg video filter: crop -> upscale -> overlay ASS
-    vf_filter = (
-        f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
-        f"scale=2160:3840,"
-        f"eq=contrast=1.2:saturation=1.5,"
-        f"hue=s=1.1,"
-        f"ass={ass_file_ffmpeg}"
+    # Check if video is already 9:16 format (portrait)
+    is_already_portrait = height > width
+    aspect_ratio = width / height if height > 0 else 1.0
+    
+    if is_already_portrait and abs(aspect_ratio - (9/16)) < 0.1:
+        # Video is already 9:16, just apply captions and enhancement
+        print(f"  📱 Video already 9:16 ({width}x{height}), applying captions only")
+        vf_filter = (
+            f"eq=contrast=1.2:saturation=1.5,"
+            f"hue=s=1.1,"
+            f"ass={ass_file_ffmpeg}"
+        )
+    else:
+        # Video is 16:9, need to crop and scale
+        print(f"  🔄 Converting {width}x{height} to 9:16 with captions")
         
-    )
+        # Set crop size to not exceed video dimensions
+        pre_crop_height = min(1920, height)
+        pre_crop_width = int(pre_crop_height * 9 / 16)
+        pre_crop_width = min(pre_crop_width, width)
+
+        speaker_x = detect_speaker_center(video_file)
+        crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
+        crop_y = 0  # You can adjust this if you want vertical centering
+
+        # FFmpeg video filter: crop -> upscale -> overlay ASS
+        vf_filter = (
+            f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
+            f"scale=2160:3840,"
+            f"eq=contrast=1.2:saturation=1.5,"
+            f"hue=s=1.1,"
+            f"ass={ass_file_ffmpeg}"
+        )
 
     cmd = [
         "ffmpeg", "-y",
@@ -833,6 +866,299 @@ def shift_ass_to_clip_start(ass_path, offset_seconds):
     subs.save(ass_path)
 
 
+def convert_clip_format_for_broll(clip, segments):
+    """Convert your clip format to what the B-roll system expects"""
+    start_sec = clip["start_sec"]
+    end_sec = clip["end_sec"]
+    
+    # Extract segments that overlap with this clip
+    clip_segments = []
+    for seg in segments:
+        if seg["start"] >= start_sec and seg["end"] <= end_sec:
+            # Adjust timing to be relative to clip start
+            clip_segments.append({
+                "start": seg["start"] - start_sec,
+                "end": seg["end"] - start_sec,
+                "text": seg["text"]
+            })
+    
+    return {
+        "hook": clip["hook"],
+        "caption": clip["caption"],
+        "transcript_text": clip["transcript_text"],
+        "segments": clip_segments,
+        "duration": end_sec - start_sec
+    }
+
+
+def generate_broll_for_clip(clip, segments, clip_index):
+    """Generate B-roll for a single clip and return timing information"""
+    if not BROLL_AVAILABLE or not broll_pipeline:
+        return []
+    
+    print(f"\n🎬 Analyzing B-roll opportunities for clip {clip_index}: {clip['hook'][:50]}...")
+    
+    # Convert clip format
+    broll_clip_data = convert_clip_format_for_broll(clip, segments)
+    
+    # Generate B-roll (prefer fast local for development)
+    prefer_quality = os.getenv("PREFER_QUALITY", "false").lower() == "true"
+    
+    try:
+        # Use the analyzer directly to get regions with timing info
+        from production_broll import ProductionBRollAnalyzer
+        analyzer = ProductionBRollAnalyzer()
+        broll_regions = analyzer.analyze_content_for_broll(broll_clip_data["segments"])
+        
+        if not broll_regions:
+            print(f"  ⚠️ No B-roll opportunities found for clip {clip_index}")
+            return []
+        
+        print(f"  ✅ Found {len(broll_regions)} B-roll opportunities")
+        
+        # Generate videos for each region
+        broll_info = []
+        for i, region in enumerate(broll_regions):
+            broll_filename = f"clip_{clip_index}_broll_{i+1}.mp4"
+            broll_path = os.path.join(BROLL_DIR, broll_filename)
+            
+            # Generate the B-roll video
+            generator = broll_pipeline.generator
+            success = generator.generate_broll_video(
+                region.prompt,
+                region.duration,
+                broll_path,
+                prefer_quality=prefer_quality
+            )
+            
+            if success:
+                broll_info.append({
+                    "path": broll_path,
+                    "start_time": region.start_time,
+                    "end_time": region.end_time,
+                    "duration": region.duration,
+                    "prompt": region.prompt
+                })
+                print(f"    📹 Generated B-roll {i+1}: {region.start_time:.1f}s-{region.end_time:.1f}s")
+            else:
+                print(f"    ❌ Failed to generate B-roll {i+1}")
+        
+        return broll_info
+        
+    except Exception as e:
+        print(f"❌ B-roll error for clip {clip_index}: {e}")
+        return []
+
+
+def create_video_with_broll_integration(original_video, broll_info, captions_file=None, output_path=None):
+    """Create final video with B-roll segments inserted at specific timestamps, then apply captions to everything"""
+    print(f"  🎞️ Creating timeline with B-roll inserts...")
+    
+    try:
+        # Get video duration and dimensions
+        result = subprocess.run([
+            "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+            "-of", "csv=p=0", original_video
+        ], capture_output=True, text=True)
+        
+        total_duration = float(result.stdout.strip())
+        
+        # Get video dimensions
+        result = subprocess.run([
+            "ffprobe", "-v", "quiet", "-show_entries", "stream=width,height",
+            "-of", "csv=p=0", original_video
+        ], capture_output=True, text=True)
+        
+        dimensions = result.stdout.strip().split(',')
+        video_width, video_height = int(dimensions[0]), int(dimensions[1])
+        is_portrait = video_height > video_width
+        
+        print(f"    Video: {video_width}x{video_height} ({'9:16' if is_portrait else '16:9'})")
+        
+        if not broll_info:
+            # No B-roll, just apply captions to original
+            print(f"    📝 No B-roll, applying captions to original video...")
+            if captions_file:
+                return overlay_captions(original_video, captions_file, output_path)
+            else:
+                import shutil
+                shutil.copy2(original_video, output_path)
+                return True
+        
+        # Filter and constrain B-roll segments
+        # CONSTRAINT: B-roll every ~7 seconds, 2-3 seconds duration each
+        valid_broll = []
+        last_broll_time = -7.0  # Allow B-roll at start
+        
+        for broll in sorted(broll_info, key=lambda x: x["start_time"]):
+            # Check 7-second spacing constraint
+            if broll["start_time"] - last_broll_time >= 7.0:
+                # Constrain duration to 2-3 seconds max
+                max_duration = min(3.0, broll.get("duration", 3.0))
+                constrained_end = min(
+                    broll["start_time"] + max_duration,
+                    broll.get("end_time", broll["start_time"] + max_duration),
+                    total_duration
+                )
+                
+                valid_broll.append({
+                    "path": broll["path"],
+                    "start_time": broll["start_time"],
+                    "end_time": constrained_end,
+                    "duration": constrained_end - broll["start_time"]
+                })
+                last_broll_time = broll["start_time"]
+        
+        print(f"    🎬 Using {len(valid_broll)} B-roll segments (filtered from {len(broll_info)} candidates)")
+        
+        if not valid_broll:
+            # No valid B-roll after filtering
+            print(f"    📝 No valid B-roll after filtering, applying captions to original...")
+            if captions_file:
+                return overlay_captions(original_video, captions_file, output_path)
+            else:
+                import shutil
+                shutil.copy2(original_video, output_path)
+                return True
+        
+        # Create composite video without captions first
+        composite_video = output_path.replace('.mp4', '_composite_no_captions.mp4')
+        
+        # Build FFmpeg inputs
+        inputs = ["-i", original_video]
+        for broll in valid_broll:
+            inputs.extend(["-i", broll["path"]])
+        
+        # Build the timeline: original video with B-roll insertions
+        timeline_segments = []
+        current_time = 0.0
+        
+        for i, broll in enumerate(valid_broll):
+            broll_input = i + 1  # B-roll inputs start at 1
+            
+            # Add original video segment before this B-roll
+            if broll["start_time"] > current_time:
+                timeline_segments.append({
+                    "type": "original",
+                    "input": 0,
+                    "start": current_time,
+                    "end": broll["start_time"],
+                    "duration": broll["start_time"] - current_time
+                })
+                current_time = broll["start_time"]
+            
+            # Add B-roll segment
+            timeline_segments.append({
+                "type": "broll",
+                "input": broll_input,
+                "start": current_time,
+                "end": current_time + broll["duration"],
+                "duration": broll["duration"]
+            })
+            current_time += broll["duration"]
+        
+        # Add final original segment if needed
+        if current_time < total_duration:
+            timeline_segments.append({
+                "type": "original",
+                "input": 0,
+                "start": current_time,
+                "end": total_duration,
+                "duration": total_duration - current_time
+            })
+        
+        print(f"    🎭 Timeline: {len(timeline_segments)} segments")
+        
+        # Build FFmpeg filter complex for timeline
+        filter_parts = []
+        segment_labels = []
+        
+        for i, segment in enumerate(timeline_segments):
+            label = f"seg{i}"
+            segment_labels.append(f"[{label}]")
+            
+            if segment["type"] == "original":
+                # Extract segment from original video (already cropped to correct size)
+                # Use the original segment timing, not shifted timing
+                original_start = segment["start"] if segment["start"] == 0 else (
+                    segment["start"] - sum(s["duration"] for s in timeline_segments[:i] if s["type"] == "broll")
+                )
+                # DON'T scale - the input video is already the right size!
+                filter_parts.append(
+                    f"[0:v]trim=start={original_start}:duration={segment['duration']},setpts=PTS-STARTPTS,setsar=1:1[{label}]"
+                )
+            else:
+                # Scale ONLY B-roll to match the already-cropped original format
+                target_scale = f"{video_width}:{video_height}"
+                filter_parts.append(
+                    f"[{segment['input']}:v]scale={target_scale}:force_original_aspect_ratio=increase,crop={target_scale},fps=30,setpts=PTS-STARTPTS,setsar=1:1[{label}]"
+                )
+        
+        # Concatenate all timeline segments
+        concat_filter = f"{''.join(segment_labels)}concat=n={len(timeline_segments)}:v=1:a=0[composite_video]"
+        filter_parts.append(concat_filter)
+        
+        filter_complex = ";".join(filter_parts)
+        
+        # Create composite video (without captions)
+        cmd = [
+            "ffmpeg", "-y",
+            *inputs,
+            "-filter_complex", filter_complex,
+            "-map", "[composite_video]",
+            "-map", "0:a",  # Keep original audio track
+            "-c:a", "copy",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            composite_video
+        ]
+        
+        print(f"    🔧 Creating composite timeline...")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"    ❌ Composite creation failed: {result.stderr}")
+            # Fallback to original video with captions
+            if captions_file:
+                return overlay_captions(original_video, captions_file, output_path)
+            else:
+                import shutil
+                shutil.copy2(original_video, output_path)
+                return True
+        
+        # Now apply captions to the composite video
+        if captions_file:
+            print(f"    📝 Applying captions to composite video...")
+            captions_success = overlay_captions(composite_video, captions_file, output_path)
+        else:
+            # No captions, just rename composite to final output
+            import shutil
+            shutil.move(composite_video, output_path)
+            captions_success = True
+        
+        # Clean up temporary composite file
+        if os.path.exists(composite_video) and composite_video != output_path:
+            os.remove(composite_video)
+        
+        if captions_success:
+            file_size = os.path.getsize(output_path) / (1024 * 1024)  # MB
+            print(f"    ✅ B-roll timeline created: {output_path} ({file_size:.1f}MB)")
+            return True
+        else:
+            print(f"    ❌ Caption overlay failed")
+            return False
+            
+    except Exception as e:
+        print(f"    ❌ Error in B-roll timeline creation: {e}")
+        # Fallback to original method
+        if captions_file:
+            return overlay_captions(original_video, captions_file, output_path)
+        else:
+            import shutil
+            shutil.copy2(original_video, output_path)
+            return True
+
 
 def main(video_path):
     #TODO COMMENT IN AND OUT WHILE TESTING
@@ -963,14 +1289,23 @@ def main(video_path):
     
     # final_clips = aligned_clips  # Use aligned clips for processing
 
-    #TODO REMOVE LATER
     final_clips = json.load(open("final_clips_aligned.json", "r", encoding="utf-8"))
+
+    # B-roll configuration
+    generate_broll = os.getenv("GENERATE_BROLL", "true").lower() == "true"
+    print(f"🎬 B-roll generation: {'✅ Enabled' if generate_broll and BROLL_AVAILABLE else '❌ Disabled'}")
 
     for i, clip in enumerate(tqdm(final_clips, desc="Processing final clips")):
         start, end = clip["start"], clip["end"]
         out_file = os.path.join(CLIPS_DIR, f"clip_{i+1}.mp4")
-        print(f"[5] Cutting clip {i+1}: {start} to {end}")
+        print(f"\n[5] Cutting clip {i+1}: {start} to {end}")
+        print(f"    Hook: {clip['hook'][:60]}...")
         cut_clip(video_path, start, end, out_file)
+
+        # Generate B-roll for this clip
+        broll_files = []
+        if generate_broll and BROLL_AVAILABLE:
+            broll_files = generate_broll_for_clip(clip, segments, i+1)
 
 
         print("[6] Generating captions...")
@@ -1009,13 +1344,53 @@ def main(video_path):
             clip_words_adjusted.append(adjusted_word)
         
         generate_subs_from_whisper_segments(clip_words_adjusted, ass_file)
+        
+        # Step 1: Create 9:16 cropped video WITHOUT captions first
+        cropped_video = os.path.join(CLIPS_DIR, f"clip_{i+1}_cropped_no_captions.mp4")
+        print(f"[7a] Creating 9:16 cropped video for clip {i+1}")
+        
+        # Just crop to 9:16 without captions
+        crop_cmd = [
+            "ffmpeg", "-y", "-i", out_file,
+            "-vf", "scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,setsar=1:1",
+            "-c:a", "copy",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            cropped_video
+        ]
+        
+        result = subprocess.run(crop_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"❌ Failed to create cropped video: {result.stderr}")
+            continue
+        
+        # Step 2: Integrate B-roll and apply captions to final composite
         final_out = os.path.join(CLIPS_DIR, f"clip_{i+1}_captioned.mp4")
-        print(f"[7] Overlaying captions on clip {i+1}")
-        # No need to shift anymore since timestamps are already relative to clip start
-        overlay_captions(out_file, ass_file, final_out)
-
-        print(f"✅ Clip {i+1} processed and saved to {final_out}")
-    print("All clips processed successful*ly!")
+        print(f"[7b] Creating timeline with B-roll and captions for clip {i+1}")
+        
+        video_created = create_video_with_broll_integration(
+            cropped_video,     # Start with uncaptioned cropped video
+            broll_files,       # B-roll segments with timing info
+            ass_file,          # Apply captions to final composite
+            final_out          # Final output
+        )
+        
+        # Clean up intermediate cropped video
+        if os.path.exists(cropped_video):
+            os.remove(cropped_video)
+        
+        if video_created:
+            if broll_files:
+                print(f"✅ Clip {i+1} completed with {len(broll_files)} B-roll segments: {final_out}")
+            else:
+                print(f"✅ Clip {i+1} completed: {final_out}")
+        else:
+            print(f"❌ Failed to create final video for clip {i+1}")
+    
+    print("\n🎉 All clips processed successfully!")
+    print(f"📁 Video clips: {CLIPS_DIR}/")
+    if BROLL_AVAILABLE and generate_broll:
+        print(f"🎬 B-roll videos: {BROLL_DIR}/")
+    print(f"📝 Captions: {CAPTIONS_DIR}/")
 
 
 
