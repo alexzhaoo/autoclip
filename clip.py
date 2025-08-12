@@ -924,13 +924,8 @@ def generate_broll_for_clip(clip, segments, clip_index):
             
             # Generate the B-roll video
             generator = broll_pipeline.generator
-            success = generator.generate_broll_video(
-                region.prompt,
-                region.duration,
-                broll_path,
-                prefer_quality=prefer_quality
-            )
-            
+            success = generator.generate_broll_video(region.prompt, region.duration, broll_path)
+
             if success:
                 broll_info.append({
                     "path": broll_path,

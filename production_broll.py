@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Production B-roll Generator v2.0
-Combines proven GPT analysis with Wand 2.2 + Vast.ai for high-quality video generation
+Integrates with Wan2.2 video generation models for high-quality video generation
 Includes fast local fallback for development and testing
 """
 
@@ -9,6 +9,9 @@ import os
 import json
 import subprocess
 import requests
+import tempfile
+import shutil
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from openai import OpenAI
@@ -32,13 +35,14 @@ class BRollRegion:
     broll_path: Optional[str] = None
 
 class ProductionBRollAnalyzer:
-    """Enhanced B-roll analyzer with proven GPT integration"""
+    """Enhanced B-roll analyzer with GPT integration"""
     
     def __init__(self):
         self.client = OpenAI(
             api_key = os.getenv("OPENAI_API_KEY")
         )
-        self.mock_mode = False
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY environment variable is required")
     
     def analyze_content_for_broll(self, segments: List[Dict]) -> List[BRollRegion]:
         """Analyze content using proven GPT method to identify B-roll opportunities"""
@@ -87,7 +91,8 @@ class ProductionBRollAnalyzer:
                     end_time=min(region.start_time + max_duration, region.end_time),
                     duration=max_duration,
                     prompt=region.prompt,
-                    reason=region.reason
+                    reason=region.reason,
+                    confidence=region.confidence
                 )
                 
                 filtered.append(constrained_region)
@@ -97,15 +102,12 @@ class ProductionBRollAnalyzer:
     
     def _analyze_chunk_with_gpt(self, chunk: List[Dict]) -> List[BRollRegion]:
         """Analyze a chunk of segments with GPT-4"""
-        if self.mock_mode:
-            return self._generate_mock_regions(chunk)
-        
         # Create transcript text from chunk
         transcript_text = " ".join([seg.get("text", "") for seg in chunk])
         
-        # Enhanced prompt based on our successful tests
+        # Enhanced prompt optimized for Wan2.2 generation
         prompt = f"""
-        Analyze this educational video transcript and identify 3-4 specific moments where B-roll footage would enhance viewer engagement.
+        Analyze this educational video transcript and identify 2-3 specific moments where B-roll footage would enhance viewer engagement.
 
         TRANSCRIPT:
         {transcript_text}
@@ -113,27 +115,30 @@ class ProductionBRollAnalyzer:
         For each B-roll opportunity, provide:
         1. START_TIME: When to start B-roll (in seconds from chunk beginning)
         2. END_TIME: When to end B-roll  
-        3. VISUAL_PROMPT: Detailed description for Wand 2.2 text-to-video model
+        3. VISUAL_PROMPT: Detailed description optimized for Wan2.2 text-to-video model
         4. REASON: Why this moment needs B-roll
 
-        Requirements for VISUAL_PROMPT:
-        - Specific, detailed descriptions suitable for AI video generation
-        - Focus on abstract concepts, scientific visualizations, or metaphors
-        - Avoid human faces or talking (audio continues)
-        - Include motion and visual style cues
-        - Target 3-5 second segments
+        Requirements for VISUAL_PROMPT (optimized for Wan2.2):
+        - Highly detailed, cinematic descriptions suitable for AI video generation
+        - Focus on scientific visualizations, abstract concepts, or detailed environments
+        - Avoid human faces or talking people (audio continues over B-roll)
+        - Include specific camera movements, lighting, and visual style cues
+        - Mention colors, textures, and motion patterns
+        - Target 2-4 second segments for optimal quality
+        - Use cinematic terminology (close-up, wide shot, tracking shot, etc.)
 
-        Examples of good prompts:
-        - "Microscopic view of stress hormones cortisol molecules floating through bloodstream, blue and white scientific visualization"
-        - "3D animation of neural pathways lighting up in brain, synapses firing with electrical signals, purple and gold colors"
-        - "Abstract representation of inflammation: red particles swirling and growing, then cooling to blue, time-lapse style"
+        Examples of excellent Wan2.2 prompts:
+        - "Cinematic close-up of cortisol stress hormone molecules floating through bloodstream, ethereal blue and white scientific visualization with soft volumetric lighting, slow motion particles"
+        - "Detailed 3D animation of neural pathways in brain tissue, synapses firing with golden electrical signals, purple and blue color palette, smooth camera push-in movement"
+        - "Microscopic view of inflammatory response, red blood cells and white particles swirling in arterial flow, warm to cool color transition, time-lapse biological process"
+        - "Abstract representation of muscle fiber contraction, detailed tissue structure with flowing motion, blue to red color gradient, macro lens cinematography"
 
         Return ONLY a JSON array:
         [
           {{
             "start_time": 2.5,
-            "end_time": 6.0,
-            "visual_prompt": "detailed prompt here",
+            "end_time": 5.0,
+            "visual_prompt": "detailed cinematic prompt here",
             "reason": "explanation here"
           }}
         ]
@@ -143,11 +148,11 @@ class ProductionBRollAnalyzer:
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 temperature=0.7,
-                max_tokens=800,
+                max_tokens=1000,
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are an expert video editor specializing in educational content. You identify perfect moments for B-roll footage and create detailed prompts for AI video generation."
+                        "content": "You are an expert video editor specializing in educational content and AI video generation. You create detailed, cinematic prompts optimized for Wan2.2 text-to-video generation."
                     },
                     {"role": "user", "content": prompt}
                 ]
@@ -158,74 +163,6 @@ class ProductionBRollAnalyzer:
         except Exception as e:
             print(f"    ❌ GPT analysis failed: {e}")
             return []
-    
-    def _generate_mock_regions(self, chunk: List[Dict]) -> List[BRollRegion]:
-        """Generate mock B-roll regions for testing when GPT is not available"""
-        if not chunk:
-            return []
-        
-        chunk_start = chunk[0].get("start", 0)
-        chunk_duration = chunk[-1].get("end", chunk_start + 10) - chunk_start
-        
-        # Generate 2 mock regions based on content
-        transcript_text = " ".join([seg.get("text", "") for seg in chunk]).lower()
-        
-        regions = []
-        
-        # First region (early in chunk)
-        regions.append(BRollRegion(
-            start_time=chunk_start + 1.0,
-            end_time=chunk_start + 4.5,
-            duration=3.5,
-            reason="stress_visualization",
-            confidence=0.8,
-            prompt=self._generate_mock_prompt(transcript_text, "early")
-        ))
-        
-        # Second region (later in chunk)
-        if chunk_duration > 8:
-            regions.append(BRollRegion(
-                start_time=chunk_start + chunk_duration - 5.0,
-                end_time=chunk_start + chunk_duration - 1.0,
-                duration=4.0,
-                reason="biological_process",
-                confidence=0.8,
-                prompt=self._generate_mock_prompt(transcript_text, "late")
-            ))
-        
-        return regions
-    
-    def _generate_mock_prompt(self, transcript_text: str, position: str) -> str:
-        """Generate mock prompts based on content analysis"""
-        prompts = {
-            "stress": [
-                "Microscopic view of stress hormones cortisol molecules floating through bloodstream, blue and white scientific visualization",
-                "3D animation of the human body with stress affecting different organs, red particles flowing through systems"
-            ],
-            "brain": [
-                "Neural pathways lighting up in brain, synapses firing with electrical signals, purple and gold colors",
-                "Brain cross-section showing neural activity, glowing connections and information processing"
-            ],
-            "heart": [
-                "Animated heart beating, blood circulation visualization with red particles flowing through vessels",
-                "Cardiovascular system overview, heart pumping blood through arteries and veins, medical animation"
-            ],
-            "default": [
-                "Abstract flowing particles representing biological processes, scientific visualization, blue and white",
-                "Cellular activity animation, microscopic view of biological processes, soft scientific lighting"
-            ]
-        }
-        
-        # Select prompt category
-        category = "default"
-        for key in ["stress", "brain", "heart"]:
-            if key in transcript_text:
-                category = key
-                break
-        
-        # Select prompt based on position
-        prompt_index = 0 if position == "early" else 1
-        return prompts[category][prompt_index]
     
     def _parse_gpt_response(self, response: str, chunk: List[Dict]) -> List[BRollRegion]:
         """Parse GPT response and create BRollRegion objects"""
@@ -267,186 +204,197 @@ class ProductionBRollAnalyzer:
             print(f"    ❌ Error parsing GPT response: {e}")
             return []
 
-class ProductionVideoGenerator:
-    """Production video generator with Wand 2.2 + Vast.ai and fast local fallback"""
+class Wan22VideoGenerator:
+    """Wan2.2 video generator with multiple model support"""
     
-    def __init__(self, vast_ai_endpoint: Optional[str] = None, fallback_mode: str = "fast_local"):
-        self.vast_ai_endpoint = vast_ai_endpoint
-        self.fallback_mode = fallback_mode
+    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B"):
+        self.wan22_path = wan22_path or os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2")
+        self.model_type = model_type
         
-        # Initialize fast local generator if available
-        self.fast_generator = None
-        if fallback_mode == "fast_local":
-            try:
-                from fast_broll import FastLocalGenerator
-                self.fast_generator = FastLocalGenerator()
-                print("✅ Fast local generator loaded")
-            except ImportError:
-                print("⚠️ Fast local generator not available (fast_broll module not found)")
+        # Model configurations
+        self.model_configs = {
+            "t2v-A14B": {
+                "task": "t2v-A14B",
+                "size": "1280*720",
+                "min_vram": 80,
+                "description": "High-quality text-to-video, 14B parameters"
+            },
+            "i2v-A14B": {
+                "task": "i2v-A14B", 
+                "size": "1280*720",
+                "min_vram": 80,
+                "description": "High-quality image-to-video, 14B parameters"
+            },
+            "ti2v-5B": {
+                "task": "ti2v-5B",
+                "size": "1280*704", 
+                "min_vram": 24,
+                "description": "Text/Image-to-video, 5B parameters, RTX 4090 compatible"
+            }
+        }
         
-        print("🎬 Production generator ready:")
-        print(f"  - Vast.ai endpoint: {'✅ Configured' if vast_ai_endpoint else '❌ Not set'}")
-        print(f"  - Fast local generator: {'✅ Available' if self.fast_generator else '❌ Not available'}")
-        print(f"  - Fallback mode: {fallback_mode}")
+        # Validate Wan2.2 installation
+        self.wan22_available = self._validate_wan22_installation()
+        
+        if not self.wan22_available:
+            raise RuntimeError(f"Wan2.2 installation not found or invalid. Please ensure Wan2.2 is properly installed at {self.wan22_path}")
+        
+        print("🎬 Wan2.2 Video Generator ready:")
+        print(f"  - Wan2.2 path: {self.wan22_path}")
+        print(f"  - Model type: {model_type} ({self.model_configs[model_type]['description']})")
+        print(f"  - Wan2.2 validated: ✅")
     
-    def generate_broll_video(self, prompt: str, duration: float, output_path: str, 
-                           prefer_quality: bool = True) -> bool:
-        """Generate B-roll video with quality preference"""
+    def _validate_wan22_installation(self) -> bool:
+        """Validate Wan2.2 installation and model availability"""
+        try:
+            # Check if Wan2.2 directory exists
+            wan22_dir = Path(self.wan22_path)
+            if not wan22_dir.exists():
+                print(f"⚠️ Wan2.2 directory not found: {self.wan22_path}")
+                return False
+            
+            # Check if generate.py exists
+            generate_script = wan22_dir / "generate.py"
+            if not generate_script.exists():
+                print(f"⚠️ generate.py not found in {self.wan22_path}")
+                return False
+            
+            # Check if model directory exists
+            model_name_map = {
+                "t2v-A14B": "Wan2.2-T2V-A14B",
+                "i2v-A14B": "Wan2.2-I2V-A14B", 
+                "ti2v-5B": "Wan2.2-TI2V-5B"
+            }
+            
+            model_dir = wan22_dir / model_name_map[self.model_type]
+            if not model_dir.exists():
+                print(f"⚠️ Model directory not found: {model_dir}")
+                print(f"  Please download the {self.model_type} model to {model_dir}")
+                return False
+            
+            print(f"✅ Wan2.2 installation validated: {self.model_type}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error validating Wan2.2 installation: {e}")
+            return False
+    
+    def generate_broll_video(self, prompt: str, duration: float, output_path: str) -> bool:
+        """Generate B-roll video with Wan2.2"""
         print(f"🎬 Generating B-roll: {prompt[:60]}... ({duration:.1f}s)")
         
-        # Try Vast.ai first if available and quality is preferred
-        if self.vast_ai_endpoint and prefer_quality:
-            print("  🌐 Attempting Wand 2.2 via Vast.ai...")
-            if self._generate_via_vast_ai(prompt, duration, output_path):
-                return True
-            print("  ⚠️ Vast.ai failed, falling back to local generation")
-        
-        # Try fast local generation
-        if self.fast_generator:
-            print("  ⚡ Using fast local generation...")
-            return self.fast_generator.generate_fast_broll(prompt, duration, output_path)
-        
-        # Final fallback to enhanced placeholder
-        print("  📝 Using enhanced placeholder...")
-        return self._generate_enhanced_placeholder(prompt, duration, output_path)
+        print(f"  🌟 Using Wan2.2 {self.model_type} generation...")
+        return self._generate_with_wan22(prompt, duration, output_path)
     
-    def _generate_via_vast_ai(self, prompt: str, duration: float, output_path: str) -> bool:
-        """Generate video using Wand 2.2 on Vast.ai"""
+    def _generate_with_wan22(self, prompt: str, duration: float, output_path: str) -> bool:
+        """Generate video using Wan2.2 models"""
         try:
-            # Enhanced payload for Wand 2.2
-            payload = {
-                "model": "wand-2.2",
-                "prompt": prompt,
-                "duration": duration,
-                "width": 1080,
-                "height": 1920,
-                "fps": 30,
-                "steps": 30,  # Higher quality
-                "guidance_scale": 8.0,
-                "seed": -1,  # Random seed
-                "motion_bucket_id": 127,  # Good motion
-                "cond_aug": 0.02
+            config = self.model_configs[self.model_type]
+            model_name_map = {
+                "t2v-A14B": "Wan2.2-T2V-A14B",
+                "i2v-A14B": "Wan2.2-I2V-A14B", 
+                "ti2v-5B": "Wan2.2-TI2V-5B"
             }
             
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {os.getenv('VAST_AI_TOKEN', '')}"
-            }
+            model_dir = Path(self.wan22_path) / model_name_map[self.model_type]
             
-            # Make request with progress tracking
-            response = requests.post(
-                f"{self.vast_ai_endpoint}/generate",
-                json=payload,
-                headers=headers,
-                timeout=600,  # 10 minute timeout for quality generation
-                stream=True
-            )
+            # Create temporary output path for Wan2.2
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
+                tmp_output = tmp_file.name
             
-            if response.status_code == 200:
-                # Save the generated video
-                with open(output_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                
-                # Verify file size
-                file_size = os.path.getsize(output_path)
-                if file_size > 1000:  # At least 1KB
-                    print(f"  ✅ High-quality B-roll generated: {output_path} ({file_size/1024:.1f}KB)")
-                    return True
-                else:
-                    print(f"  ❌ Generated file too small: {file_size} bytes")
-                    return False
-            else:
-                print(f"  ❌ Vast.ai request failed: {response.status_code}")
-                return False
-                
-        except requests.Timeout:
-            print("  ⏱️ Vast.ai request timed out")
-            return False
-        except Exception as e:
-            print(f"  ❌ Vast.ai generation error: {e}")
-            return False
-    
-    def _generate_enhanced_placeholder(self, prompt: str, duration: float, output_path: str) -> bool:
-        """Generate enhanced placeholder with better visuals"""
-        try:
-            # Generate color based on prompt
-            color = self._prompt_to_color(prompt)
-            
-            # Create visual effects based on content
-            effects = self._prompt_to_effects(prompt)
-            
-            # Shortened prompt for display
-            display_text = prompt[:50] + "..." if len(prompt) > 50 else prompt
-            
+            # Build Wan2.2 command
             cmd = [
-                "ffmpeg", "-y", "-v", "quiet",
-                "-f", "lavfi",
-                "-i", f"color=c={color}:size=1080x1920:duration={duration}:rate=30",
-                "-vf", (
-                    f"drawtext=text='🎬 AI B-ROLL\\n{display_text}'"
-                    ":fontcolor=white:fontsize=24:x=(w-text_w)/2:y=h*0.4+20*sin(t*2*PI/1.5),"
-                    "drawtext=text='⚡ Fast Generation Mode'"
-                    ":fontcolor=cyan:fontsize=18:x=(w-text_w)/2:y=h*0.6,"
-                    f"{effects}"
-                ),
-                "-c:v", "libx264",
-                "-pix_fmt", "yuv420p",
-                output_path
+                "python", 
+                str(Path(self.wan22_path) / "generate.py"),
+                "--task", config["task"],
+                "--size", config["size"],
+                "--ckpt_dir", str(model_dir),
+                "--prompt", prompt,
+                "--offload_model", "True",
+                "--convert_model_dtype"
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Add t5_cpu for 5B model to save memory
+            if self.model_type == "ti2v-5B":
+                cmd.extend(["--t5_cpu"])
+            
+            # Add prompt extension if API key is available
+            dash_api_key = os.getenv("DASH_API_KEY")
+            if dash_api_key:
+                cmd.extend([
+                    "--use_prompt_extend",
+                    "--prompt_extend_method", "dashscope"
+                ])
+            
+            print(f"    🔧 Running: {' '.join(cmd[:6])}... (full command with {len(cmd)} args)")
+            
+            # Set environment
+            env = os.environ.copy()
+            env["PYTHONPATH"] = self.wan22_path
+            if dash_api_key:
+                env["DASH_API_KEY"] = dash_api_key
+            
+            # Run generation with timeout
+            result = subprocess.run(
+                cmd,
+                cwd=self.wan22_path,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+            
             if result.returncode == 0:
-                file_size = os.path.getsize(output_path)
-                print(f"  ✅ Enhanced placeholder created: {output_path} ({file_size/1024:.1f}KB)")
-                return True
+                # Find the generated video file
+                generated_files = list(Path(self.wan22_path).glob("*.mp4"))
+                if generated_files:
+                    # Get the most recent video file
+                    latest_video = max(generated_files, key=lambda p: p.stat().st_mtime)
+                    
+                    # Move to desired output path
+                    shutil.move(str(latest_video), output_path)
+                    
+                    # Verify file size
+                    file_size = os.path.getsize(output_path)
+                    if file_size > 10000:  # At least 10KB
+                        print(f"  ✅ Wan2.2 B-roll generated: {output_path} ({file_size/1024:.1f}KB)")
+                        return True
+                    else:
+                        print(f"  ❌ Generated file too small: {file_size} bytes")
+                        return False
+                else:
+                    print("  ❌ No output video file found")
+                    return False
             else:
-                print(f"  ❌ Enhanced placeholder failed: {result.stderr}")
+                print(f"  ❌ Wan2.2 generation failed:")
+                print(f"    stdout: {result.stdout}")
+                print(f"    stderr: {result.stderr}")
                 return False
                 
-        except Exception as e:
-            print(f"  ❌ Error creating enhanced placeholder: {e}")
+        except subprocess.TimeoutExpired:
+            print("  ⏱️ Wan2.2 generation timed out")
             return False
-    
-    def _prompt_to_color(self, prompt: str) -> str:
-        """Smart color selection based on prompt content"""
-        prompt_lower = prompt.lower()
-        
-        if any(word in prompt_lower for word in ["stress", "cortisol", "tension"]):
-            return "#FF6B6B"  # Stress red
-        elif any(word in prompt_lower for word in ["brain", "neural", "synapse"]):
-            return "#6B73FF"  # Neural blue
-        elif any(word in prompt_lower for word in ["heart", "blood", "circulatory"]):
-            return "#FF9FF3"  # Cardiovascular pink
-        elif any(word in prompt_lower for word in ["muscle", "fiber", "tissue"]):
-            return "#54A0FF"  # Muscle blue
-        elif any(word in prompt_lower for word in ["molecule", "chemical", "hormone"]):
-            return "#5F27CD"  # Chemical purple
-        else:
-            return "#00D2D3"  # Default cyan
-    
-    def _prompt_to_effects(self, prompt: str) -> str:
-        """Add visual effects based on prompt content"""
-        prompt_lower = prompt.lower()
-        
-        if "flowing" in prompt_lower or "stream" in prompt_lower:
-            return "drawtext=text='~':fontcolor=white:fontsize=40:x=w*0.1+50*sin(t):y=h*0.2+30*cos(t*1.5)"
-        elif "pulse" in prompt_lower or "beat" in prompt_lower:
-            return "drawtext=text='♥':fontcolor=red:fontsize=60:x=(w-text_w)/2:y=h*0.8+10*sin(t*8)"
-        elif "spark" in prompt_lower or "fire" in prompt_lower:
-            return "drawtext=text='✨':fontcolor=yellow:fontsize=30:x=w*0.8:y=h*0.2+20*sin(t*3)"
-        else:
-            return "drawtext=text='◦':fontcolor=white:fontsize=20:x=w*0.9:y=h*0.1+15*sin(t*2)"
+        except Exception as e:
+            print(f"  ❌ Wan2.2 generation error: {e}")
+            return False
+        finally:
+            # Clean up temporary files
+            if 'tmp_output' in locals() and os.path.exists(tmp_output):
+                try:
+                    os.unlink(tmp_output)
+                except OSError:
+                    pass
 
 class ProductionBRollPipeline:
-    """Complete production B-roll pipeline"""
+    """Complete production B-roll pipeline with Wan2.2 integration"""
     
-    def __init__(self, vast_ai_endpoint: Optional[str] = None):
+    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B"):
         self.analyzer = ProductionBRollAnalyzer()
-        self.generator = ProductionVideoGenerator(vast_ai_endpoint)
-        self.vast_ai_endpoint = vast_ai_endpoint
+        self.generator = Wan22VideoGenerator(wan22_path, model_type)
+        self.wan22_path = wan22_path
+        self.model_type = model_type
     
-    def process_clip(self, clip_data: Dict, prefer_quality: bool = True) -> bool:
+    def process_clip(self, clip_data: Dict) -> bool:
         """Process a complete clip with B-roll generation"""
         print(f"\n🎬 Processing clip: {clip_data.get('hook', 'Unknown')[:50]}...")
         
@@ -467,6 +415,7 @@ class ProductionBRollPipeline:
             print(f"✅ Found {len(broll_regions)} B-roll opportunities")
             
             # Generate B-roll videos
+            successful_generations = 0
             for i, region in enumerate(broll_regions, 1):
                 print(f"\n📹 Generating B-roll {i}/{len(broll_regions)}:")
                 print(f"  Time: {region.start_time:.1f}s - {region.end_time:.1f}s ({region.duration:.1f}s)")
@@ -477,74 +426,119 @@ class ProductionBRollPipeline:
                 success = self.generator.generate_broll_video(
                     region.prompt,
                     region.duration,
-                    output_path,
-                    prefer_quality=prefer_quality
+                    output_path
                 )
                 
                 if success:
                     region.broll_path = output_path
+                    successful_generations += 1
                     print(f"  ✅ Generated: {output_path}")
                 else:
                     print(f"  ❌ Failed to generate B-roll {i}")
             
             # Generate final composite video
-            return self._create_final_video(broll_regions)
+            print(f"\n✅ Successfully generated {successful_generations}/{len(broll_regions)} B-roll videos")
+            
+            # Report results
+            for region in broll_regions:
+                if region.broll_path and os.path.exists(region.broll_path):
+                    file_size = os.path.getsize(region.broll_path) / 1024
+                    print(f"  📁 {region.broll_path}: {file_size:.1f}KB")
+            
+            return successful_generations > 0
             
         except Exception as e:
             print(f"❌ Error processing clip: {e}")
             import traceback
             traceback.print_exc()
             return False
-    
-    def _create_final_video(self, broll_regions: List[BRollRegion]) -> bool:
-        """Create final video with B-roll integration"""
-        print("\n🎞️ Creating final video with B-roll integration...")
-        
-        # This would integrate with your existing video composition pipeline
-        # For now, just report success
-        successful_brolls = [r for r in broll_regions if r.broll_path and os.path.exists(r.broll_path)]
-        
-        print(f"✅ Successfully generated {len(successful_brolls)}/{len(broll_regions)} B-roll videos")
-        
-        for region in successful_brolls:
-            file_size = os.path.getsize(region.broll_path) / 1024
-            print(f"  📁 {region.broll_path}: {file_size:.1f}KB")
-        
-        return len(successful_brolls) > 0
 
 # Configuration
 PRODUCTION_CONFIG = {
-    "vast_ai_endpoint": os.getenv("VAST_AI_ENDPOINT"),
-    "vast_ai_token": os.getenv("VAST_AI_TOKEN"),
-    "prefer_quality": True,  # Set to False for faster development
-    "max_concurrent_generations": 3
+    "wan22_path": os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2"),
+    "model_type": os.getenv("WAN22_MODEL", "ti2v-5B"),  # ti2v-5B, t2v-A14B, i2v-A14B
 }
 
 def create_production_pipeline() -> ProductionBRollPipeline:
-    """Factory function to create production B-roll pipeline"""
-    return ProductionBRollPipeline(PRODUCTION_CONFIG["vast_ai_endpoint"])
+    """Factory function to create production B-roll pipeline with Wan2.2"""
+    return ProductionBRollPipeline(
+        wan22_path=PRODUCTION_CONFIG["wan22_path"],
+        model_type=PRODUCTION_CONFIG["model_type"]
+    )
 
-if __name__ == "__main__":
-    # Test the production system
-    print("🚀 Testing Production B-roll System")
+def setup_wan22_environment():
+    """Helper function to set up Wan2.2 environment"""
+    print("🔧 Setting up Wan2.2 Environment")
     print("=" * 50)
     
-    # Test with sample data
-    test_clip = {
-        "hook": "The Hidden Truth About Stress",
-        "segments": [
-            {"start": 0, "end": 10, "text": "When we experience stress, our bodies release a cascade of hormones including cortisol and adrenaline."},
-            {"start": 10, "end": 20, "text": "These stress hormones travel through our bloodstream and affect every cell in our body."},
-            {"start": 20, "end": 30, "text": "The sympathetic nervous system activates, increasing our heart rate and blood pressure."}
-        ]
-    }
+    wan22_path = PRODUCTION_CONFIG["wan22_path"]
+    model_type = PRODUCTION_CONFIG["model_type"]
     
-    pipeline = create_production_pipeline()
+    print(f"1. Clone Wan2.2 repository to: {wan22_path}")
+    print("   git clone https://github.com/Wan-Video/Wan2.2.git")
+    print("   cd Wan2.2")
+    print("   pip install -r requirements.txt")
     
-    # Test with prefer_quality=False for faster testing
-    success = pipeline.process_clip(test_clip, prefer_quality=False)
+    print(f"\n2. Download {model_type} model:")
+    if model_type == "ti2v-5B":
+        print("   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B")
+        print("   (Requires ~24GB VRAM, works with RTX 4090)")
+    elif model_type == "t2v-A14B":
+        print("   huggingface-cli download Wan-AI/Wan2.2-T2V-A14B --local-dir ./Wan2.2-T2V-A14B")
+        print("   (Requires ~80GB VRAM, high-end GPU needed)")
+    elif model_type == "i2v-A14B":
+        print("   huggingface-cli download Wan-AI/Wan2.2-I2V-A14B --local-dir ./Wan2.2-I2V-A14B")
+        print("   (Requires ~80GB VRAM, high-end GPU needed)")
     
-    if success:
-        print("\n🎉 Production Pipeline Test PASSED!")
-    else:
-        print("\n❌ Production Pipeline Test FAILED!")
+    print(f"\n3. Set environment variables:")
+    print(f"   export WAN22_PATH={wan22_path}")
+    print(f"   export WAN22_MODEL={model_type}")
+    print("   export OPENAI_API_KEY=your_openai_api_key")
+    print("   export DASH_API_KEY=your_dashscope_api_key  # Optional, for prompt extension")
+    
+    print(f"\n4. Test installation:")
+    print("   python -c \"from wan22_broll import create_production_pipeline; pipeline = create_production_pipeline()\"")
+    
+    print(f"\nRecommended GPU requirements:")
+    print("- ti2v-5B: RTX 4090 (24GB VRAM) or better")
+    print("- t2v-A14B/i2v-A14B: A100 (80GB VRAM) or H100")
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Production B-roll Generator with Wan2.2")
+    parser.add_argument("--setup", action="store_true", help="Show setup instructions")
+    parser.add_argument("--model", choices=["ti2v-5B", "t2v-A14B", "i2v-A14B"], 
+                       default="ti2v-5B", help="Wan2.2 model to use")
+    
+    args = parser.parse_args()
+    
+    if args.setup:
+        setup_wan22_environment()
+        exit(0)
+    
+    # Update config based on args
+    PRODUCTION_CONFIG["model_type"] = args.model
+    
+    print("🎬 Production B-roll System with Wan2.2")
+    print("=" * 50)
+    print(f"Model: {args.model}")
+    
+    try:
+        pipeline = create_production_pipeline()
+        print("✅ Pipeline ready for production use")
+        print("\nTo use this pipeline:")
+        print("1. Import: from production_broll import create_production_pipeline")
+        print("2. Create: pipeline = create_production_pipeline()")
+        print("3. Process: pipeline.process_clip(your_clip_data)")
+        
+    except Exception as e:
+        print(f"❌ Pipeline initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        
+    print("\n💡 Tips:")
+    print("- Use --setup to see installation instructions")
+    print("- Use --model ti2v-5B for consumer GPUs (RTX 4090)")  
+    print("- Use --model t2v-A14B for high-end GPUs (A100/H100)")
+    print("- Set DASH_API_KEY for enhanced prompt generation")
