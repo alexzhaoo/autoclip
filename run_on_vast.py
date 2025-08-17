@@ -5,7 +5,7 @@ import subprocess
 
 API_KEY = os.environ["VAST_API_KEY"]
 HF_TOKEN = os.environ["HF_TOKEN"]
-BASE_URL = "https://console.vast.ai/api/v0"
+BASE_URL = "https://vast.ai/api/v0"
 
 def test_api_connection():
     """Test basic API connectivity"""
