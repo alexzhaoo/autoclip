@@ -5,7 +5,7 @@ import subprocess
 
 API_KEY = os.environ["VAST_API_KEY"]
 HF_TOKEN = os.environ["HF_TOKEN"]
-BASE_URL = "https://vast.ai/api/v0"
+BASE_URL = "https://console.vast.ai/api/v0"
 
 def test_api_connection():
     """Test basic API connectivity"""
@@ -33,13 +33,10 @@ def vast_cmd(path, payload):
     return r.json()
 
 def find_offer():
-    # Use the correct API endpoint for searching offers
+    # Use q-string format for searching offers
+    q_filter = "verified=true,rentable=true,gpu_name=RTX_4090,num_gpus=1,gpu_ram>=24"
     search_params = {
-        "verified": "true",
-        "gpu_name": "RTX_4090",
-        "gpu_ram_gte": "24",
-        "num_gpus": "1",
-        "rentable": "true",
+        "q": q_filter,
         "order": "dph_total",
         "limit": "10"
     }
@@ -47,20 +44,16 @@ def find_offer():
     try:
         # Try the offers endpoint first
         offers = vast_get("offers", **search_params)
-        if offers and len(offers) > 0:
+        if isinstance(offers, list) and len(offers) > 0:
             return offers[0]
+        elif isinstance(offers, dict) and "offers" in offers and len(offers["offers"]) > 0:
+            return offers["offers"][0]
     except Exception as e:
         print(f"⚠️ Offers endpoint failed: {e}")
     
     try:
-        # Fallback to bundles endpoint with simpler query
-        search_params_simple = {
-            "gpu_name": "RTX_4090",
-            "rentable": "true",
-            "order": "dph_total",
-            "limit": "10"
-        }
-        result = vast_get("bundles", **search_params_simple)
+        # Fallback to bundles endpoint
+        result = vast_get("bundles", **search_params)
         offers = result.get("offers", [])
         if offers and len(offers) > 0:
             return offers[0]
