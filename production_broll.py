@@ -49,7 +49,7 @@ class ProductionBRollAnalyzer:
         print("🧠 Using GPT to analyze transcript for B-roll opportunities...")
         
         # Process in chunks for better results
-        chunk_size = 3
+        chunk_size = 4
         all_regions = []
         
         for i in range(0, len(segments), chunk_size):
@@ -130,9 +130,7 @@ class ProductionBRollAnalyzer:
         Examples of excellent Wan2.2 prompts:
         - "Cinematic close-up of cortisol stress hormone molecules floating through bloodstream, ethereal blue and white scientific visualization with soft volumetric lighting, slow motion particles"
         - "Detailed 3D animation of neural pathways in brain tissue, synapses firing with golden electrical signals, purple and blue color palette, smooth camera push-in movement"
-        - "Microscopic view of inflammatory response, red blood cells and white particles swirling in arterial flow, warm to cool color transition, time-lapse biological process"
-        - "Abstract representation of muscle fiber contraction, detailed tissue structure with flowing motion, blue to red color gradient, macro lens cinematography"
-
+    
         Return ONLY a JSON array:
         [
           {{
@@ -146,7 +144,7 @@ class ProductionBRollAnalyzer:
         
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-5-mini-2025-08-07",
                 temperature=0.7,
                 max_tokens=1000,
                 messages=[
