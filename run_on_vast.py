@@ -5,7 +5,17 @@ import subprocess
 
 API_KEY = os.environ["VAST_API_KEY"]
 HF_TOKEN = os.environ["HF_TOKEN"]
-BASE_URL = "https://vast.ai/api/v0"
+BASE_URL = "https://console.vast.ai/api/v0"
+
+def test_api_connection():
+    """Test basic API connectivity"""
+    try:
+        result = vast_get("users/current")
+        print(f"✅ API connection successful. User: {result.get('username', 'Unknown')}")
+        return True
+    except Exception as e:
+        print(f"❌ API connection failed: {e}")
+        return False
 
 def vast_get(path, **params):
     r = requests.get(f"{BASE_URL}/{path}", params=params, headers={"Authorization": f"Bearer {API_KEY}"})
@@ -23,27 +33,55 @@ def vast_cmd(path, payload):
     return r.json()
 
 def find_offer():
-    search_q = (
-        "verified=true&"
-        "gpu_name=RTX_4090&"
-        "gpu_ram>=24&"
-        "num_gpus=1&"
-        "rentable=true&"
-        "order=price&"
-        "limit=1"
-    )
-    offers = vast_get("bundles", q=search_q)["offers"]
-    if not offers:
-        raise RuntimeError("No offers found for your specs.")
-    return offers[0]
+    # Use the correct API endpoint for searching offers
+    search_params = {
+        "verified": "true",
+        "gpu_name": "RTX_4090",
+        "gpu_ram_gte": "24",
+        "num_gpus": "1",
+        "rentable": "true",
+        "order": "dph_total",
+        "limit": "10"
+    }
+    
+    try:
+        # Try the offers endpoint first
+        offers = vast_get("offers", **search_params)
+        if offers and len(offers) > 0:
+            return offers[0]
+    except Exception as e:
+        print(f"⚠️ Offers endpoint failed: {e}")
+    
+    try:
+        # Fallback to bundles endpoint with simpler query
+        search_params_simple = {
+            "gpu_name": "RTX_4090",
+            "rentable": "true",
+            "order": "dph_total",
+            "limit": "10"
+        }
+        result = vast_get("bundles", **search_params_simple)
+        offers = result.get("offers", [])
+        if offers and len(offers) > 0:
+            return offers[0]
+    except Exception as e:
+        print(f"⚠️ Bundles endpoint failed: {e}")
+    
+    raise RuntimeError("No offers found for your specs. Try checking Vast.ai manually or relaxing GPU requirements.")
 
 def create_instance(offer):
+    # Handle different field names from the API
+    client_id = offer.get("client_id") or offer.get("id")
+    min_bid = offer.get("min_bid") or offer.get("dph_total") or offer.get("dph_base", 0.5)
+    
     payload = {
-        "client_id": offer["client_id"],
+        "client_id": client_id,
         "image": "pytorch/pytorch:2.4.0-cuda12.1-cudnn8-runtime",
         "disk": 60,
-        "min_bid": offer["min_bid"]
+        "min_bid": min_bid
     }
+    
+    print(f"💰 Creating instance with client_id: {client_id}, min_bid: ${min_bid}/hr")
     return vast_post("instances", payload)
 
 def wait_for_running(instance_id):
@@ -110,21 +148,39 @@ if __name__ == "__main__":
 
     video_input = sys.argv[1]
 
-    print("🔍 Finding offer...")
-    offer = find_offer()
-    print(f"Found: {offer['gpu_name']} at ${offer['min_bid']}/hr")
+    try:
+        print("� Testing API connection...")
+        if not test_api_connection():
+            print("❌ Cannot connect to Vast.ai API")
+            sys.exit(1)
+        
+        print("�🔍 Finding offer...")
+        offer = find_offer()
+        
+        # Handle different field names for display
+        gpu_name = offer.get("gpu_name", "Unknown GPU")
+        price = offer.get("min_bid") or offer.get("dph_total") or offer.get("dph_base", "Unknown")
+        print(f"Found: {gpu_name} at ${price}/hr")
 
-    print("🚀 Creating instance...")
-    instance = create_instance(offer)
-    instance_id = instance["instance"]["id"]
+        print("🚀 Creating instance...")
+        instance = create_instance(offer)
+        instance_id = instance["instance"]["id"]
 
-    print("⏳ Waiting for instance to be running...")
-    inst_details = wait_for_running(instance_id)
-    ssh_cmd = inst_details["ssh_cmd"]
+        print("⏳ Waiting for instance to be running...")
+        inst_details = wait_for_running(instance_id)
+        ssh_cmd = inst_details["ssh_cmd"]
 
-    print("⚙️ Setting up environment and running pipeline...")
-    setup_and_run(ssh_cmd, video_input)
+        print("⚙️ Setting up environment and running pipeline...")
+        setup_and_run(ssh_cmd, video_input)
 
-    print("🛑 Shutting down instance...")
-    shutdown_instance(instance_id)
-    print("✅ Done!")
+        print("🛑 Shutting down instance...")
+        shutdown_instance(instance_id)
+        print("✅ Done!")
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        print("💡 Tips:")
+        print("- Check that VAST_API_KEY environment variable is set")
+        print("- Verify your Vast.ai API key is valid")
+        print("- Try checking available instances on https://vast.ai manually")
+        sys.exit(1)
