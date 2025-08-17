@@ -24,6 +24,11 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
+import argparse
+
+
+nltk.download('punkt')
+nltk.download('stopwords')
 
 # B-roll integration
 try:
@@ -947,7 +952,6 @@ def generate_broll_for_clip(clip, segments, clip_index):
 
 def create_video_with_broll_integration(original_video, broll_info, captions_file=None, output_path=None):
     """Create final video with B-roll segments inserted at specific timestamps, then apply captions to everything"""
-    print(f"  🎞️ Creating timeline with B-roll inserts...")
     
     try:
         # Get video duration and dimensions
@@ -1155,7 +1159,22 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             return True
 
 
-def main(video_path):
+def main(video_path, output_dir=None):
+    # Set up output directories
+    global CLIPS_DIR, CAPTIONS_DIR, TRANSCRIPTS_DIR, BROLL_DIR
+    
+    if output_dir:
+        CLIPS_DIR = os.path.join(output_dir, "clips")
+        CAPTIONS_DIR = os.path.join(output_dir, "captions")
+        TRANSCRIPTS_DIR = os.path.join(output_dir, "transcripts")
+        BROLL_DIR = os.path.join(output_dir, "broll")
+        
+        # Create output directories
+        os.makedirs(CLIPS_DIR, exist_ok=True)
+        os.makedirs(CAPTIONS_DIR, exist_ok=True)
+        os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
+        os.makedirs(BROLL_DIR, exist_ok=True)
+    
     #TODO COMMENT IN AND OUT WHILE TESTING
     print("[1] Transcribing...")
     transcript, segments = transcribe(video_path)
@@ -1266,8 +1285,6 @@ def main(video_path):
         final_clips = []
 
     print(f"[4] Final selected clips: {len(final_clips)}")
-
-    final_clips = json.load(open("final_clips.json", "r", encoding="utf-8"))
     
   
     print(f"[4.5] Aligning {len(final_clips)} clips with transcript...")
@@ -1390,10 +1407,21 @@ def main(video_path):
 
 
 if __name__ == "__main__":
-    input_source = 'https://www.youtube.com/watch?v=hCW2NHbWNwA&t=327s'
+    parser = argparse.ArgumentParser(description='Extract and process video clips')
+    parser.add_argument('--video', type=str, help='Path to video file or YouTube URL')
+    parser.add_argument('--output_dir', type=str, default=None, help='Output directory for clips')
+    
+    args = parser.parse_args()
+    
+    # Use provided video or fallback to default
+    if args.video:
+        input_source = args.video
+    else:
+        input_source = 'https://www.youtube.com/watch?v=hCW2NHbWNwA&t=327s'
+    
     if input_source.startswith("http://") or input_source.startswith("https://"):
         video_path = download_youtube_video(input_source)
     else:
         video_path = input_source
 
-    main(video_path)
+    main(video_path, args.output_dir)
