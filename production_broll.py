@@ -264,7 +264,9 @@ class Wan22VideoGenerator:
                 "ti2v-5B": "Wan2.2-TI2V-5B"
             }
             
-            model_dir = wan22_dir / model_name_map[self.model_type]
+            # Model is in workspace root, not inside Wan2.2 directory
+            workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
+            model_dir = workspace_dir / model_name_map[self.model_type]
             if not model_dir.exists():
                 print(f"⚠️ Model directory not found: {model_dir}")
                 print(f"  Please download the {self.model_type} model to {model_dir}")
@@ -294,7 +296,9 @@ class Wan22VideoGenerator:
                 "ti2v-5B": "Wan2.2-TI2V-5B"
             }
             
-            model_dir = Path(self.wan22_path) / model_name_map[self.model_type]
+            # Model is in workspace root, not inside Wan2.2 directory
+            workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
+            model_dir = workspace_dir / model_name_map[self.model_type]
             
             # Create temporary output path for Wan2.2
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
