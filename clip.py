@@ -27,9 +27,57 @@ from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 import argparse
 
+# NLTK data downloads with error handling for remote environments
+def ensure_nltk_data():
+    """Ensure NLTK data is available, with fallbacks for remote environments"""
+    
+    # Set NLTK data path for remote environments
+    import os
+    nltk_data_paths = [
+        '/workspace/nltk_data',  # Vast.ai custom path
+        '/root/nltk_data',       # Docker containers
+        os.path.expanduser('~/nltk_data')  # User home
+    ]
+    
+    for path in nltk_data_paths:
+        if os.path.exists(path):
+            if path not in nltk.data.path:
+                nltk.data.path.insert(0, path)
+    
+    try:
+        # Try to download punkt tokenizer data
+        print("📚 Downloading NLTK data...")
+        nltk.download('punkt', quiet=True)
+        nltk.download('punkt_tab', quiet=True)  # New punkt tokenizer
+        nltk.download('stopwords', quiet=True)
+        print("✅ NLTK data downloaded successfully")
+    except Exception as e:
+        print(f"⚠️ NLTK download warning: {e}")
+        # Try alternative download locations
+        try:
+            import ssl
+            try:
+                _create_unverified_https_context = ssl._create_unverified_context
+            except AttributeError:
+                pass
+            else:
+                ssl._create_default_https_context = _create_unverified_https_context
+            
+            # Try downloading to the first available path
+            download_dir = next((p for p in nltk_data_paths if os.path.exists(os.path.dirname(p))), None)
+            if download_dir:
+                os.makedirs(download_dir, exist_ok=True)
+                nltk.download('punkt', download_dir=download_dir, quiet=True)
+                nltk.download('punkt_tab', download_dir=download_dir, quiet=True)
+                nltk.download('stopwords', download_dir=download_dir, quiet=True)
+                print("✅ NLTK data downloaded with SSL workaround")
+            else:
+                raise Exception("No suitable download directory found")
+        except Exception as e2:
+            print(f"⚠️ NLTK download failed: {e2}")
+            print("ℹ️ Will use fallback sentence splitting if needed")
 
-nltk.download('punkt')
-nltk.download('stopwords')
+ensure_nltk_data()
 
 # B-roll integration
 try:
@@ -327,7 +375,18 @@ def chunk_transcript(segments, chunk_duration=360, overlap=60):
 
 def extract_transcript_text(segments):
     raw_text = " ".join([seg["text"].strip() for seg in segments])
-    sentences = sent_tokenize(raw_text)
+    
+    # Try NLTK first, fallback to simple splitting
+    try:
+        sentences = sent_tokenize(raw_text)
+    except LookupError:
+        # NLTK data not available, use simple sentence splitting
+        print("⚠️ NLTK punkt tokenizer not available, using fallback sentence splitting")
+        # Simple sentence splitting on periods, exclamation marks, and question marks
+        import re
+        sentences = re.split(r'[.!?]+', raw_text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+    
     return " ".join(sentences)
 
 

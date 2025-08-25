@@ -93,6 +93,41 @@ cd /workspace
 git clone https://github.com/alexzhaoo/autoclip pipeline
 pip install -r pipeline/requirements.txt
 
+# Download NLTK data with multiple methods and fallbacks
+echo "📚 Downloading NLTK data..."
+python -c "
+import os
+import nltk
+import ssl
+
+# Set NLTK data path
+nltk_data_dir = '/workspace/nltk_data'
+os.makedirs(nltk_data_dir, exist_ok=True)
+nltk.data.path.insert(0, nltk_data_dir)
+
+# SSL context fix for downloads
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+# Download NLTK datasets
+datasets = ['punkt', 'punkt_tab', 'stopwords']
+for dataset in datasets:
+    try:
+        nltk.download(dataset, download_dir=nltk_data_dir, quiet=False)
+        print(f'✅ Downloaded {dataset}')
+    except Exception as e:
+        print(f'⚠️ Failed to download {dataset}: {e}')
+
+print(f'NLTK data path: {nltk.data.path}')
+"
+
+# Set NLTK_DATA environment variable
+export NLTK_DATA=/workspace/nltk_data
+
 # Test YouTube download first
 echo "Testing YouTube download..."
 yt-dlp --print filename "https://www.youtube.com/watch?v=hCW2NHbWNwA&t=327s" || echo "YouTube download may fail"
