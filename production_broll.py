@@ -146,7 +146,7 @@ class ProductionBRollAnalyzer:
             response = self.client.chat.completions.create(
                 model="gpt-5-mini-2025-08-07",
                 temperature=0.7,
-                max_tokens=1000,
+                max_completion_tokens=1000,
                 messages=[
                     {
                         "role": "system", 
