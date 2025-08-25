@@ -17,6 +17,7 @@ from tqdm import tqdm
 from tqdm import trange
 import re
 import pysrt
+import glob
 import pysubs2
 import nltk
 from nltk.tokenize import sent_tokenize
@@ -842,15 +843,20 @@ def detect_speaker_center(video_path):
 
 
 
+
 def download_youtube_video(url, output_path="downloads"):
     os.makedirs(output_path, exist_ok=True)
     output_template = os.path.join(output_path, "%(title).40s.%(ext)s")
 
     ydl_opts = {
-        'cookiefile': 'cookies.txt',
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
+        # remove cookies unless you actually need login
+        # 'cookiefile': 'cookies.txt',
+        'format': 'bestvideo+bestaudio/best',
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
+        'retries': 10,
+        'fragment_retries': 10,
+        'force_ipv4': True,  # important on Vast.ai
     }
 
     print(f"📥 Downloading from YouTube: {url}")
@@ -859,7 +865,11 @@ def download_youtube_video(url, output_path="downloads"):
 
     print("✅ Download complete.")
 
-    downloaded_files = sorted(glob.glob(os.path.join(output_path, "*.mp4")), key=os.path.getctime, reverse=True)
+    downloaded_files = sorted(
+        glob.glob(os.path.join(output_path, "*.mp4")),
+        key=os.path.getctime,
+        reverse=True
+    )
     return downloaded_files[0] if downloaded_files else None
 
 def shift_ass_to_clip_start(ass_path, offset_seconds):
