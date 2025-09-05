@@ -125,39 +125,6 @@ model = WhisperModel("small.en", device="cuda" if torch.cuda.is_available() else
 import json
 import re
 
-def setup_robust_downloader():
-    """Setup yt-dlp with robust network settings for Vast.ai"""
-    import socket
-    
-    # Increase socket timeout globally
-    socket.setdefaulttimeout(120)
-    
-    # Configure for better network handling
-    base_opts = {
-        'socket_timeout': 120,
-        'retries': 25,
-        'fragment_retries': 25,
-        'extractor_retries': 15,
-        'force_ipv4': True,
-        'http_chunk_size': 10485760,  # 10MB chunks
-        'geo_bypass': True,
-        'geo_bypass_country': 'US',
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web', 'tv_embedded'],
-                'skip': ['dash'],  # Skip problematic DASH streams
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Sec-Fetch-Mode': 'navigate',
-        }
-    }
-    
-    return base_opts
-
 def safe_parse_gpt_response(response_text):
     # Regex to extract JSON array or object
     match = re.search(r'(\[.*\]|\{"clips":\s*\[.*?\]\})', response_text, re.DOTALL)
@@ -936,72 +903,35 @@ def detect_speaker_center(video_path):
 
 
 
+import os, glob, yt_dlp
+
 def download_youtube_video(url, output_path="downloads"):
     os.makedirs(output_path, exist_ok=True)
     output_template = os.path.join(output_path, "%(title).40s.%(ext)s")
 
-    # Get robust base options
-    base_opts = setup_robust_downloader()
-    base_opts.update({
-        'format': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',  # Start with reasonable quality
+    ydl_opts = {
+        'cookiefile': 'cookies.txt',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
-    })
-
-    # Add cookies if available
-    if os.path.exists('cookies.txt'):
-        base_opts['cookiefile'] = 'cookies.txt'
-        print("🍪 Using cookies.txt")
+        'retries': float('inf'),         # infinite retries
+        'fragment_retries': float('inf'),
+        'socket_timeout': 120,           # bigger timeout
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0',
+        },
+    }
 
     print(f"📥 Downloading from YouTube: {url}")
-    
-    # Progressive fallback strategies
-    strategies = [
-        {
-            'name': 'High quality with android client',
-            'format': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-            'extractor_args': {'youtube': {'player_client': ['android']}}
-        },
-        {
-            'name': 'Medium quality with web client', 
-            'format': 'best[height<=720]/worst[height>=480]',
-            'extractor_args': {'youtube': {'player_client': ['web']}}
-        },
-        {
-            'name': 'Any available format',
-            'format': 'best/worst',
-            'extractor_args': {'youtube': {'player_client': ['tv_embedded', 'android', 'web']}}
-        },
-        {
-            'name': 'Emergency fallback',
-            'format': 'mp4',
-            'socket_timeout': 180,
-            'retries': 50
-        }
-    ]
-    
-    for attempt, strategy in enumerate(strategies):
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
-            print(f"  📋 Strategy {attempt + 1}/{len(strategies)}: {strategy['name']}")
-            
-            # Merge strategy with base options
-            ydl_opts = base_opts.copy()
-            ydl_opts.update(strategy)
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            print("✅ Download successful!")
-            break
-            
+            ydl.download([url])
         except Exception as e:
-            print(f"  ❌ Strategy {attempt + 1} failed: {str(e)[:120]}...")
-            if attempt < len(strategies) - 1:
-                print(f"  🔄 Trying next strategy in 15 seconds...")
-                import time
-                time.sleep(15)
-            else:
-                print(f"❌ All download strategies failed")
-                return None
+            print(f"❌ Failed permanently: {e}")
+            return None
+
+    print("✅ Download complete.")
 
     downloaded_files = sorted(
         glob.glob(os.path.join(output_path, "*.mp4")),
@@ -1009,6 +939,7 @@ def download_youtube_video(url, output_path="downloads"):
         reverse=True
     )
     return downloaded_files[0] if downloaded_files else None
+
 
 def shift_ass_to_clip_start(ass_path, offset_seconds):
     subs = pysubs2.load(ass_path)
@@ -1573,23 +1504,3 @@ if __name__ == "__main__":
         video_path = input_source
 
     main(video_path, args.output_dir)
-
-# Network configuration for Vast.ai instances
-import ssl
-import urllib3
-
-# Disable SSL warnings for remote instances
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Configure SSL context for remote environments
-def configure_ssl_for_remote():
-    """Configure SSL settings for remote environments like Vast.ai"""
-    try:
-        # Create unverified HTTPS context
-        ssl._create_default_https_context = ssl._create_unverified_context
-        print("🔧 SSL configured for remote environment")
-    except Exception as e:
-        print(f"⚠️ SSL configuration warning: {e}")
-
-# Call SSL configuration
-configure_ssl_for_remote()
