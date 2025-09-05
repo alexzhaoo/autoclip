@@ -125,6 +125,39 @@ model = WhisperModel("small.en", device="cuda" if torch.cuda.is_available() else
 import json
 import re
 
+def setup_robust_downloader():
+    """Setup yt-dlp with robust network settings for Vast.ai"""
+    import socket
+    
+    # Increase socket timeout globally
+    socket.setdefaulttimeout(120)
+    
+    # Configure for better network handling
+    base_opts = {
+        'socket_timeout': 120,
+        'retries': 25,
+        'fragment_retries': 25,
+        'extractor_retries': 15,
+        'force_ipv4': True,
+        'http_chunk_size': 10485760,  # 10MB chunks
+        'geo_bypass': True,
+        'geo_bypass_country': 'US',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web', 'tv_embedded'],
+                'skip': ['dash'],  # Skip problematic DASH streams
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
+        }
+    }
+    
+    return base_opts
+
 def safe_parse_gpt_response(response_text):
     # Regex to extract JSON array or object
     match = re.search(r'(\[.*\]|\{"clips":\s*\[.*?\]\})', response_text, re.DOTALL)
@@ -1560,36 +1593,3 @@ def configure_ssl_for_remote():
 
 # Call SSL configuration
 configure_ssl_for_remote()
-
-def setup_robust_downloader():
-    """Setup yt-dlp with robust network settings for Vast.ai"""
-    import socket
-    
-    # Increase socket timeout globally
-    socket.setdefaulttimeout(120)
-    
-    # Configure for better network handling
-    base_opts = {
-        'socket_timeout': 120,
-        'retries': 25,
-        'fragment_retries': 25,
-        'extractor_retries': 15,
-        'force_ipv4': True,
-        'http_chunk_size': 10485760,  # 10MB chunks
-        'geo_bypass': True,
-        'geo_bypass_country': 'US',
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web', 'tv_embedded'],
-                'skip': ['dash'],  # Skip problematic DASH streams
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Sec-Fetch-Mode': 'navigate',
-        }
-    }
-    
-    return base_opts
