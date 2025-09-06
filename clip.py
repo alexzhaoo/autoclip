@@ -20,6 +20,7 @@ import pysrt
 import glob
 import pysubs2
 import nltk
+import ssl
 from nltk.tokenize import sent_tokenize
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
@@ -909,36 +910,86 @@ def download_youtube_video(url, output_path="downloads"):
     os.makedirs(output_path, exist_ok=True)
     output_template = os.path.join(output_path, "%(title).40s.%(ext)s")
 
-    ydl_opts = {
-        'cookiefile': 'cookies.txt',
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
-        'outtmpl': output_template,
-        'merge_output_format': 'mp4',
-        'retries': float('inf'),         # infinite retries
-        'fragment_retries': float('inf'),
-        'socket_timeout': 120,           # bigger timeout
-        'nocheckcertificate': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0',
+    # Try multiple strategies to bypass bot detection
+    strategies = [
+        # Strategy 1: Use cookies from browser
+        {
+            'cookiesfrombrowser': ('chrome',),
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
+            'outtmpl': output_template,
+            'merge_output_format': 'mp4',
+            'retries': 3,
+            'fragment_retries': 3,
+            'socket_timeout': 120,
+            'nocheckcertificate': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
         },
-    }
+        # Strategy 2: Use cookies file if it exists
+        {
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
+            'outtmpl': output_template,
+            'merge_output_format': 'mp4',
+            'retries': 3,
+            'fragment_retries': 3,
+            'socket_timeout': 120,
+            'nocheckcertificate': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+        },
+        # Strategy 3: Basic download without cookies
+        {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
+            'outtmpl': output_template,
+            'merge_output_format': 'mp4',
+            'retries': 2,
+            'fragment_retries': 2,
+            'socket_timeout': 60,
+            'nocheckcertificate': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+        }
+    ]
 
     print(f"📥 Downloading from YouTube: {url}")
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
-            ydl.download([url])
-        except Exception as e:
-            print(f"❌ Failed permanently: {e}")
-            return None
+    
+    for i, ydl_opts in enumerate(strategies, 1):
+        # Remove None values from options
+        ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
+        
+        print(f"  Trying strategy {i}/3...")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                ydl.download([url])
+                print("✅ Download complete.")
+                break
+            except Exception as e:
+                print(f"  ❌ Strategy {i} failed: {str(e)[:100]}...")
+                if i == len(strategies):
+                    print(f"❌ All download strategies failed. Last error: {e}")
+                    print("\n💡 To fix this issue:")
+                    print("1. Install a browser extension to export YouTube cookies")
+                    print("2. Save cookies as 'cookies.txt' in this directory")
+                    print("3. Or use yt-dlp with --cookies-from-browser chrome")
+                    return None
 
-    print("✅ Download complete.")
-
+    # Find the downloaded file
     downloaded_files = sorted(
         glob.glob(os.path.join(output_path, "*.mp4")),
         key=os.path.getctime,
         reverse=True
     )
-    return downloaded_files[0] if downloaded_files else None
+    
+    if downloaded_files:
+        print(f"✅ Downloaded: {os.path.basename(downloaded_files[0])}")
+        return downloaded_files[0]
+    else:
+        print("❌ No downloaded files found")
+        return None
 
 
 def shift_ass_to_clip_start(ass_path, offset_seconds):
@@ -1499,8 +1550,26 @@ if __name__ == "__main__":
         input_source = 'https://www.youtube.com/watch?v=hCW2NHbWNwA&t=327s'
     
     if input_source.startswith("http://") or input_source.startswith("https://"):
+        print(f"🌐 Processing YouTube URL: {input_source}")
         video_path = download_youtube_video(input_source)
+        if video_path is None:
+            print("❌ Failed to download video. Exiting.")
+            exit(1)
+        if not os.path.exists(video_path):
+            print(f"❌ Downloaded video file not found: {video_path}")
+            exit(1)
     else:
+        print(f"📁 Processing local file: {input_source}")
         video_path = input_source
+        if not os.path.exists(video_path):
+            print(f"❌ Video file not found: {video_path}")
+            exit(1)
 
-    main(video_path, args.output_dir)
+    print(f"✅ Using video file: {video_path}")
+    try:
+        main(video_path, args.output_dir)
+    except Exception as e:
+        print(f"❌ Processing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
