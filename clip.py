@@ -251,7 +251,7 @@ def concat_videos(video_list, output_file):
     subprocess.run(cmd, check=True)
 
 
-def extract_clips(transcript, var ,max_clips=8):
+def extract_clips(transcript, var ,max_clips=2):
     # Truncate transcript at the last sentence before 5000 chars
     prompt = f"""
 
@@ -915,9 +915,8 @@ def download_youtube_video(url, output_path="downloads"):
         # Strategy 1: Use cookies from browser
         {
             'cookiesfrombrowser': ('chrome',),
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
+            'format': 'best[ext=mp4]/mp4/best',
             'outtmpl': output_template,
-            'merge_output_format': 'mp4',
             'retries': 3,
             'fragment_retries': 3,
             'socket_timeout': 120,
@@ -929,9 +928,8 @@ def download_youtube_video(url, output_path="downloads"):
         # Strategy 2: Use cookies file if it exists
         {
             'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
+            'format': 'best[ext=mp4]/mp4/best',
             'outtmpl': output_template,
-            'merge_output_format': 'mp4',
             'retries': 3,
             'fragment_retries': 3,
             'socket_timeout': 120,
@@ -942,9 +940,8 @@ def download_youtube_video(url, output_path="downloads"):
         },
         # Strategy 3: Basic download without cookies
         {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4/best',
+            'format': 'best[ext=mp4]/mp4/best',
             'outtmpl': output_template,
-            'merge_output_format': 'mp4',
             'retries': 2,
             'fragment_retries': 2,
             'socket_timeout': 60,
@@ -1359,7 +1356,7 @@ def main(video_path, output_dir=None):
 
     print(f"[3] Reranking {len(all_candidate_clips)} clips by viral potential...")
 
-    MAX_CLIPS_FOR_RERANK = 120
+    MAX_CLIPS_FOR_RERANK = 30
     if len(all_candidate_clips) > MAX_CLIPS_FOR_RERANK:
         print(f"⚠️ Too many candidate clips ({len(all_candidate_clips)}), truncating to {MAX_CLIPS_FOR_RERANK} for reranking.")
         all_candidate_clips = all_candidate_clips[:MAX_CLIPS_FOR_RERANK]
