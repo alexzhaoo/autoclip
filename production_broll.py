@@ -341,7 +341,7 @@ class Wan22VideoGenerator:
                 env=env,
                 capture_output=True,
                 text=True,
-                timeout=600  # 10 minute timeout
+                timeout=1200  # 20 minute timeout
             )
             
             if result.returncode == 0:
