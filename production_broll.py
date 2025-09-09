@@ -64,14 +64,14 @@ class ProductionBRollAnalyzer:
             # Small delay to respect rate limits
             time.sleep(0.5)
         
-        # Apply timing constraints: 1 B-roll every ~7 seconds, 2-3 seconds each
+        # Apply timing constraints: 1 B-roll every ~10 seconds, 1-2 seconds each
         filtered_regions = self._apply_timing_constraints(all_regions)
         
         print(f"  ✅ Found {len(all_regions)} candidates, filtered to {len(filtered_regions)} optimal placements")
         return filtered_regions
     
     def _apply_timing_constraints(self, regions: List[BRollRegion]) -> List[BRollRegion]:
-        """Apply timing constraints: 1 B-roll every ~7 seconds, max 3 seconds duration each"""
+        """Apply timing constraints: 1 B-roll every ~10 seconds, max 2 seconds duration each"""
         if not regions:
             return regions
         
@@ -79,13 +79,13 @@ class ProductionBRollAnalyzer:
         sorted_regions = sorted(regions, key=lambda r: r.start_time)
         
         filtered = []
-        last_broll_time = -7.0  # Allow B-roll at start
+        last_broll_time = -10.0  # Allow B-roll at start
         
         for region in sorted_regions:
-            # Check 7-second spacing constraint
-            if region.start_time - last_broll_time >= 7.0:
-                # Constrain duration to 2-3 seconds
-                max_duration = min(3.0, region.duration)
+            # Check 10-second spacing constraint
+            if region.start_time - last_broll_time >= 10.0:
+                # Constrain duration to 1-2 seconds
+                max_duration = min(2.0, region.duration)
                 constrained_region = BRollRegion(
                     start_time=region.start_time,
                     end_time=min(region.start_time + max_duration, region.end_time),
@@ -107,7 +107,7 @@ class ProductionBRollAnalyzer:
         
         # Enhanced prompt optimized for Wan2.2 generation
         prompt = f"""
-        Analyze this educational video transcript and identify 2-3 specific moments where B-roll footage would enhance viewer engagement.
+        Analyze this video transcript and identify 2-3 specific moments where B-roll footage would enhance viewer engagement.
 
         TRANSCRIPT:
         {transcript_text}
@@ -120,16 +120,25 @@ class ProductionBRollAnalyzer:
 
         Requirements for VISUAL_PROMPT (optimized for Wan2.2):
         - Highly detailed, cinematic descriptions suitable for AI video generation
-        - Focus on scientific visualizations, abstract concepts, or detailed environments
+        - Choose from these visual categories based on content:
+          * Scientific: molecules, cells, brain activity, biological processes
+          * Abstract: geometric patterns, flowing energy, conceptual animations
+          * Nature: landscapes, weather, organic textures, natural phenomena
+          * Lifestyle: hands working, objects in motion, daily activities (no faces)
+          * Technology: digital interfaces, data visualization, futuristic concepts
+          * Artistic: paint mixing, ink flowing, creative processes, artistic textures
         - Avoid human faces or talking people (audio continues over B-roll)
         - Include specific camera movements, lighting, and visual style cues
         - Mention colors, textures, and motion patterns
-        - Target 2-4 second segments for optimal quality
+        - Target 1-2 second segments for optimal quality
         - Use cinematic terminology (close-up, wide shot, tracking shot, etc.)
 
-        Examples of excellent Wan2.2 prompts:
-        - "Cinematic close-up of cortisol stress hormone molecules floating through bloodstream, ethereal blue and white scientific visualization with soft volumetric lighting, slow motion particles"
-        - "Detailed 3D animation of neural pathways in brain tissue, synapses firing with golden electrical signals, purple and blue color palette, smooth camera push-in movement"
+        Examples of excellent Wan2.2 prompts for different categories:
+        - Scientific: "Cinematic close-up of cortisol stress hormone molecules floating through bloodstream, ethereal blue and white scientific visualization with soft volumetric lighting, slow motion particles"
+        - Abstract: "Flowing golden energy streams forming geometric patterns against deep purple background, smooth camera rotation, ethereal particle effects, cinematic lighting"
+        - Nature: "Macro shot of morning dew droplets on green grass blades, soft natural lighting, gentle breeze movement, shallow depth of field, peaceful atmosphere"
+        - Lifestyle: "Close-up of hands writing in notebook with pen, warm lighting, shallow focus on paper texture, smooth camera movement, cozy atmosphere"
+        - Technology: "3D holographic data visualization with floating charts and graphs, blue and cyan color palette, smooth camera orbit, futuristic interface elements"
     
         Return ONLY a JSON array:
         [
@@ -148,7 +157,7 @@ class ProductionBRollAnalyzer:
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are an expert video editor specializing in educational content and AI video generation. You create detailed, cinematic prompts optimized for Wan2.2 text-to-video generation."
+                        "content": "You are an expert video editor specializing in engaging short-form content and AI video generation. You create detailed, cinematic prompts optimized for Wan2.2 text-to-video generation across diverse visual categories including scientific, abstract, nature, lifestyle, technology, and artistic themes."
                     },
                     {"role": "user", "content": prompt}
                 ]

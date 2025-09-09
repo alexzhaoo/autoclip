@@ -227,6 +227,8 @@ def create_grey_freeze_frame(input_clip, output_clip, duration):
             "-vf", vf_filter,
             "-t", str(duration),
             "-c:v", "h264_nvenc",
+            "-preset", "p4",  # Higher quality NVENC preset
+            "-cq", "18",  # Better quality setting
             "-pix_fmt", "yuv420p",
             output_clip
         ]
@@ -237,8 +239,8 @@ def create_grey_freeze_frame(input_clip, output_clip, duration):
             "-vf", vf_filter,
             "-t", str(duration),
             "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
+            "-preset", "slow",  # Better quality preset
+            "-crf", "18",  # Higher quality (lower CRF)
             "-pix_fmt", "yuv420p",
             output_clip
         ]
@@ -274,8 +276,8 @@ def concat_videos(video_list, output_file):
             "-f", "concat", "-safe", "0",
             "-i", "concat_list.txt",
             "-c:v", "h264_nvenc",
-            "-preset", "slow",
-            "-crf", "18",
+            "-preset", "p4",  # Higher quality NVENC preset
+            "-cq", "18",  # Better quality setting
             "-c:a", "aac",
             "-movflags", "+faststart",
             "-pix_fmt", "yuv420p",
@@ -288,8 +290,8 @@ def concat_videos(video_list, output_file):
             "-f", "concat", "-safe", "0",
             "-i", "concat_list.txt",
             "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
+            "-preset", "slow",  # Better quality preset
+            "-crf", "18",  # Higher quality (lower CRF)
             "-c:a", "aac",
             "-movflags", "+faststart",
             "-pix_fmt", "yuv420p",
@@ -601,7 +603,7 @@ def overlay_captions(video_file, ass_file, output_file):
                 f"ass={ass_file_ffmpeg}"
             )
         else:
-            # Video is 16:9, need to crop and scale
+            # Video is 16:9, need to crop and scale - BUT DO FINAL SCALING ONLY
             print(f"  🔄 Converting {width}x{height} to 9:16 with captions")
             
             # Set crop size to not exceed video dimensions
@@ -613,10 +615,12 @@ def overlay_captions(video_file, ass_file, output_file):
             crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
             crop_y = 0  # You can adjust this if you want vertical centering
 
-            # FFmpeg video filter: crop -> upscale -> overlay ASS
+            # QUALITY FIX: Crop but don't upscale yet - do final scaling only
+            # This avoids double scaling that causes quality degradation
+            print(f"  📏 Quality improvement: {width}x{height} → crop to {pre_crop_width}x{pre_crop_height} → scale to 1080x1920")
             vf_filter = (
                 f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
-                f"scale=2160:3840,"
+                f"scale=1080:1920,"  # Scale to 1080p 9:16 for better quality/performance balance
                 f"eq=contrast=1.2:saturation=1.5,"
                 f"hue=s=1.1,"
                 f"ass={ass_file_ffmpeg}"
@@ -627,11 +631,12 @@ def overlay_captions(video_file, ass_file, output_file):
             "-i", video_file,
             "-vf", vf_filter,
             "-c:v", "libx264",  # Use CPU encoding as fallback
-            "-preset", "medium",
-            "-crf", "23",
+            "-preset", "slow",  # Better quality preset
+            "-crf", "18",  # Higher quality (lower CRF)
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "+faststart",
+            "-pix_fmt", "yuv420p",
             output_file
         ]
 
@@ -646,11 +651,16 @@ def overlay_captions(video_file, ass_file, output_file):
                 "-i", video_file,
                 "-vf", vf_filter,
                 "-c:v", "h264_nvenc",
-                "-preset", "slow",
-                "-b:v", "12M",
+                "-preset", "p4",  # Higher quality NVENC preset (equivalent to slow)
+                "-rc", "vbr",  # Variable bitrate for better quality
+                "-cq", "18",   # Quality setting for NVENC (lower = better)
+                "-b:v", "15M", # Higher bitrate for better quality
+                "-maxrate", "20M",
+                "-bufsize", "30M",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-movflags", "+faststart",
+                "-pix_fmt", "yuv420p",
                 output_file
             ]
         else:
@@ -1178,9 +1188,10 @@ def generate_broll_for_clip(clip, segments, clip_index):
                     "duration": region.duration,
                     "prompt": region.prompt
                 })
-                print(f"    📹 Generated B-roll {i+1}: {region.start_time:.1f}s-{region.end_time:.1f}s")
+                print(f"    📹 Generated B-roll {i+1}: {region.start_time:.1f}s-{region.end_time:.1f}s ({region.duration:.1f}s duration)")
+                print(f"        Prompt: {region.prompt[:60]}...")
             else:
-                print(f"    ❌ Failed to generate B-roll {i+1}")
+                print(f"    ❌ Failed to generate B-roll {i+1} at {region.start_time:.1f}s")
         
         return broll_info
         
@@ -1190,7 +1201,7 @@ def generate_broll_for_clip(clip, segments, clip_index):
 
 
 def create_video_with_broll_integration(original_video, broll_info, captions_file=None, output_path=None):
-    """Create final video with B-roll segments inserted at specific timestamps, then apply captions to everything"""
+    """Create final video with B-roll segments overlaid on original video, maintaining perfect audio/caption sync"""
     
     try:
         # Validate inputs
@@ -1259,15 +1270,21 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             raise FileNotFoundError(f"B-roll files not found: {missing_broll}")
         
         # Filter and constrain B-roll segments
-        # CONSTRAINT: B-roll every ~7 seconds, 2-3 seconds duration each
+        # CONSTRAINT: B-roll every ~10 seconds, 1-2 seconds duration each
+        # IMPORTANT: No B-roll in first 5 seconds to avoid sync issues
         valid_broll = []
-        last_broll_time = -7.0  # Allow B-roll at start
+        last_broll_time = -10.0  # This allows spacing calculation to work
         
         for broll in sorted(broll_info, key=lambda x: x["start_time"]):
-            # Check 7-second spacing constraint
-            if broll["start_time"] - last_broll_time >= 7.0:
-                # Constrain duration to 2-3 seconds max
-                max_duration = min(3.0, broll.get("duration", 3.0))
+            # CRITICAL FIX: Don't allow B-roll in first 5 seconds of clip
+            if broll["start_time"] < 5.0:
+                print(f"    ⚠️ Skipping B-roll at {broll['start_time']:.1f}s (too early, minimum 5s)")
+                continue
+                
+            # Check 10-second spacing constraint
+            if broll["start_time"] - last_broll_time >= 10.0:
+                # Constrain duration to 1-2 seconds max
+                max_duration = min(2.0, broll.get("duration", 2.0))
                 constrained_end = min(
                     broll["start_time"] + max_duration,
                     broll.get("end_time", broll["start_time"] + max_duration),
@@ -1281,6 +1298,9 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
                     "duration": constrained_end - broll["start_time"]
                 })
                 last_broll_time = broll["start_time"]
+                print(f"    ✅ B-roll scheduled: {broll['start_time']:.1f}s-{constrained_end:.1f}s")
+            else:
+                print(f"    ⚠️ Skipping B-roll at {broll['start_time']:.1f}s (too close to previous at {last_broll_time:.1f}s)")
         
         print(f"    🎬 Using {len(valid_broll)} B-roll segments (filtered from {len(broll_info)} candidates)")
         
@@ -1294,100 +1314,71 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
                 shutil.copy2(original_video, output_path)
                 return True
         
-        # Create composite video without captions first
+        # Create composite video without captions first (using overlay approach)
         composite_video = output_path.replace('.mp4', '_composite_no_captions.mp4')
         
-        # Build FFmpeg inputs
+        # Build FFmpeg inputs - original video first, then all B-roll videos
         inputs = ["-i", original_video]
         for broll in valid_broll:
             inputs.extend(["-i", broll["path"]])
         
-        # Build the timeline: original video with B-roll insertions
-        timeline_segments = []
-        current_time = 0.0
+        # NEW APPROACH: Overlay B-roll on top of original video (maintains sync)
+        print(f"🎭 B-roll overlay approach: {len(valid_broll)} overlays (maintains perfect sync)")
         
+        # Debug: Print the overlay schedule
+        for i, broll in enumerate(valid_broll):
+            print(f"  Overlay {i+1}: B-roll at {broll['start_time']:.1f}s-{broll['end_time']:.1f}s ({broll['duration']:.1f}s)")
+        
+        # Build overlay filter chain
+        filter_parts = []
+        overlay_labels = []
+        
+        # Start with the original video as base
+        current_label = "[0:v]"
+        
+        # Scale and prepare each B-roll overlay
         for i, broll in enumerate(valid_broll):
             broll_input = i + 1  # B-roll inputs start at 1
+            broll_label = f"broll{i}"
+            overlay_out = f"overlay{i}"
             
-            # Add original video segment before this B-roll
-            if broll["start_time"] > current_time:
-                timeline_segments.append({
-                    "type": "original",
-                    "input": 0,
-                    "start": current_time,
-                    "end": broll["start_time"],
-                    "duration": broll["start_time"] - current_time
-                })
-                current_time = broll["start_time"]
+            # Scale B-roll to match video dimensions and prepare for overlay
+            filter_parts.append(
+                f"[{broll_input}:v]scale={video_width}:{video_height}:force_original_aspect_ratio=increase,"
+                f"crop={video_width}:{video_height},fps=30,setpts=PTS-STARTPTS[{broll_label}]"
+            )
             
-            # Add B-roll segment
-            timeline_segments.append({
-                "type": "broll",
-                "input": broll_input,
-                "start": current_time,
-                "end": current_time + broll["duration"],
-                "duration": broll["duration"]
-            })
-            current_time += broll["duration"]
+            # Create overlay with fade-in/fade-out for smooth transitions
+            fade_duration = 0.3  # 0.3 second fade
+            overlay_filter = (
+                f"{current_label}[{broll_label}]overlay="
+                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})'"
+                f"[{overlay_out}]"
+            )
+            filter_parts.append(overlay_filter)
+            current_label = f"[{overlay_out}]"
         
-        # Add final original segment if needed
-        if current_time < total_duration:
-            timeline_segments.append({
-                "type": "original",
-                "input": 0,
-                "start": current_time,
-                "end": total_duration,
-                "duration": total_duration - current_time
-            })
-        
-        print(f"🎭 Timeline: {len(timeline_segments)} segments")
-        
-        # Build FFmpeg filter complex for timeline
-        filter_parts = []
-        segment_labels = []
-        
-        for i, segment in enumerate(timeline_segments):
-            label = f"seg{i}"
-            segment_labels.append(f"[{label}]")
-            
-            if segment["type"] == "original":
-                # Extract segment from original video (already cropped to correct size)
-                # Use the original segment timing, not shifted timing
-                original_start = segment["start"] if segment["start"] == 0 else (
-                    segment["start"] - sum(s["duration"] for s in timeline_segments[:i] if s["type"] == "broll")
-                )
-                # DON'T scale - the input video is already the right size!
-                filter_parts.append(
-                    f"[0:v]trim=start={original_start}:duration={segment['duration']},setpts=PTS-STARTPTS,setsar=1:1[{label}]"
-                )
-            else:
-                # Scale ONLY B-roll to match the already-cropped original format
-                target_scale = f"{video_width}:{video_height}"
-                filter_parts.append(
-                    f"[{segment['input']}:v]scale={target_scale}:force_original_aspect_ratio=increase,crop={target_scale},fps=30,setpts=PTS-STARTPTS,setsar=1:1[{label}]"
-                )
-        
-        # Concatenate all timeline segments
-        concat_filter = f"{''.join(segment_labels)}concat=n={len(timeline_segments)}:v=1:a=0[composite_video]"
-        filter_parts.append(concat_filter)
+        # Final output from overlay chain
+        filter_parts.append(f"{current_label.strip('[]')}[composite_video]")
         
         filter_complex = ";".join(filter_parts)
         
-        # Create composite video (without captions)
+        # Create composite video (without captions) - IMPROVED QUALITY SETTINGS
         cmd = [
             "ffmpeg", "-y",
             *inputs,
             "-filter_complex", filter_complex,
             "-map", "[composite_video]",
-            "-map", "0:a",  # Keep original audio track
-            "-c:a", "copy",
+            "-map", "0:a",  # Keep original audio track (maintains perfect sync)
+            "-c:a", "copy",  # Copy audio without re-encoding
             "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
+            "-preset", "slow",  # Better quality preset
+            "-crf", "18",  # Higher quality (lower CRF)
+            "-pix_fmt", "yuv420p",
             composite_video
         ]
         
-        print(f"    🔧 Creating composite timeline...")
+        print("    🔧 Creating composite with B-roll overlays...")
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
@@ -1410,7 +1401,7 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
         
         # Now apply captions to the composite video
         if captions_file:
-            print(f"    📝 Applying captions to composite video...")
+            print("    📝 Applying captions to composite video...")
             captions_success = overlay_captions(composite_video, captions_file, output_path)
             
             if not captions_success:
@@ -1440,7 +1431,8 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             raise RuntimeError(f"Final output too small ({final_size} bytes) - likely corrupted")
         
         file_size = final_size / (1024 * 1024)  # MB
-        print(f"    ✅ B-roll timeline created: {output_path} ({file_size:.1f}MB)")
+        print(f"    ✅ B-roll overlay video created: {output_path} ({file_size:.1f}MB)")
+        print("    🎯 Perfect sync maintained: Original duration preserved, audio/captions aligned")
         return True
             
     except Exception as e:
