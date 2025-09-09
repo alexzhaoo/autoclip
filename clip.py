@@ -146,6 +146,17 @@ def format_time(seconds):
     millis = int((seconds - int(seconds)) * 1000)
     return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
+def detect_cuda_availability():
+    """Check if CUDA/NVENC is available for FFmpeg"""
+    try:
+        result = subprocess.run([
+            "ffmpeg", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=1", 
+            "-t", "1", "-c:v", "h264_nvenc", "-f", "null", "-"
+        ], capture_output=True, text=True, timeout=10)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
 def transcribe(video_path):
     segments, _ = model.transcribe(video_path, word_timestamps=True)
 
@@ -206,15 +217,32 @@ def create_grey_freeze_frame(input_clip, output_clip, duration):
         f"format=gray,fps=30"
     )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", input_clip,
-        "-vf", vf_filter,
-        "-t", str(duration),
-        "-c:v", "h264_nvenc",
-        "-pix_fmt", "yuv420p",
-        output_clip
-    ]
+    # Check CUDA availability and use appropriate encoder
+    cuda_available = detect_cuda_availability()
+    
+    if cuda_available:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_clip,
+            "-vf", vf_filter,
+            "-t", str(duration),
+            "-c:v", "h264_nvenc",
+            "-pix_fmt", "yuv420p",
+            output_clip
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_clip,
+            "-vf", vf_filter,
+            "-t", str(duration),
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            output_clip
+        ]
+    
     subprocess.run(cmd, check=True)
     print(f"✅ Grey freeze frame created: {output_clip}")
 
@@ -236,18 +264,38 @@ def concat_videos(video_list, output_file):
             safe_path = os.path.abspath(vid).replace('\\', '/')
             f.write(f"file '{safe_path}'\n")
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", "concat_list.txt",
-        "-c:v", "h264_nvenc",
-        "-preset", "slow",
-        "-crf", "18",
-        "-c:a", "aac",
-        "-movflags", "+faststart",
-        "-pix_fmt", "yuv420p",
-        output_file
-    ]
+    # Check CUDA availability and use appropriate encoder
+    cuda_available = detect_cuda_availability()
+    
+    if cuda_available:
+        print("  🚀 Using CUDA hardware acceleration for video concatenation")
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", "concat_list.txt",
+            "-c:v", "h264_nvenc",
+            "-preset", "slow",
+            "-crf", "18",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+            "-pix_fmt", "yuv420p",
+            output_file
+        ]
+    else:
+        print("  💻 Using CPU encoding for video concatenation (CUDA not available)")
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", "concat_list.txt",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+            "-pix_fmt", "yuv420p",
+            output_file
+        ]
+    
     subprocess.run(cmd, check=True)
 
 
@@ -576,17 +624,37 @@ def overlay_captions(video_file, ass_file, output_file):
 
         cmd = [
             "ffmpeg", "-y",
-            "-hwaccel", "cuda",
             "-i", video_file,
             "-vf", vf_filter,
-            "-c:v", "h264_nvenc",
-            "-preset", "slow",
-            "-b:v", "12M",
+            "-c:v", "libx264",  # Use CPU encoding as fallback
+            "-preset", "medium",
+            "-crf", "23",
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "+faststart",
             output_file
         ]
+
+        # Try to detect if CUDA is available first
+        cuda_available = detect_cuda_availability()
+        
+        if cuda_available:
+            print("  🚀 Using CUDA hardware acceleration")
+            cmd = [
+                "ffmpeg", "-y",
+                "-hwaccel", "cuda",
+                "-i", video_file,
+                "-vf", vf_filter,
+                "-c:v", "h264_nvenc",
+                "-preset", "slow",
+                "-b:v", "12M",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                output_file
+            ]
+        else:
+            print("  💻 Using CPU encoding (CUDA not available)")
 
         print("FFmpeg filter:", vf_filter)
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
