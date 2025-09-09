@@ -230,10 +230,10 @@ class Wan22VideoGenerator:
         }
         
         # Validate Wan2.2 installation
-        self.wan22_available = self._validate_wan22_installation()
-        
-        if not self.wan22_available:
-            raise RuntimeError(f"Wan2.2 installation not found or invalid. Please ensure Wan2.2 is properly installed at {self.wan22_path}")
+        try:
+            self.wan22_available = self._validate_wan22_installation()
+        except Exception as e:
+            raise RuntimeError(f"Wan2.2 validation failed: {e}")
         
         print("🎬 Wan2.2 Video Generator ready:")
         print(f"  - Wan2.2 path: {self.wan22_path}")
@@ -246,14 +246,12 @@ class Wan22VideoGenerator:
             # Check if Wan2.2 directory exists
             wan22_dir = Path(self.wan22_path)
             if not wan22_dir.exists():
-                print(f"⚠️ Wan2.2 directory not found: {self.wan22_path}")
-                return False
+                raise FileNotFoundError(f"Wan2.2 directory not found: {self.wan22_path}")
             
             # Check if generate.py exists
             generate_script = wan22_dir / "generate.py"
             if not generate_script.exists():
-                print(f"⚠️ generate.py not found in {self.wan22_path}")
-                return False
+                raise FileNotFoundError(f"generate.py not found in {self.wan22_path}")
             
             # Check if model directory exists
             model_name_map = {
@@ -266,16 +264,14 @@ class Wan22VideoGenerator:
             workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
             model_dir = workspace_dir / model_name_map[self.model_type]
             if not model_dir.exists():
-                print(f"⚠️ Model directory not found: {model_dir}")
-                print(f"  Please download the {self.model_type} model to {model_dir}")
-                return False
+                raise FileNotFoundError(f"Model directory not found: {model_dir}. Please download the {self.model_type} model to {model_dir}")
             
             print(f"✅ Wan2.2 installation validated: {self.model_type}")
             return True
             
         except Exception as e:
             print(f"❌ Error validating Wan2.2 installation: {e}")
-            return False
+            raise  # Re-raise the exception instead of returning False
     
     def generate_broll_video(self, prompt: str, duration: float, output_path: str) -> bool:
         """Generate B-roll video with Wan2.2"""
@@ -352,24 +348,30 @@ class Wan22VideoGenerator:
                     latest_video = max(generated_files, key=lambda p: p.stat().st_mtime)
                     
                     # Move to desired output path
-                    shutil.move(str(latest_video), output_path)
+                    try:
+                        shutil.move(str(latest_video), output_path)
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to move generated video from {latest_video} to {output_path}: {e}")
                     
-                    # Verify file size
+                    # Verify file exists and has content
+                    if not os.path.exists(output_path):
+                        raise RuntimeError(f"Output file was not created at {output_path}")
+                    
                     file_size = os.path.getsize(output_path)
-                    if file_size > 10000:  # At least 10KB
-                        print(f"  ✅ Wan2.2 B-roll generated: {output_path} ({file_size/1024:.1f}KB)")
-                        return True
-                    else:
-                        print(f"  ❌ Generated file too small: {file_size} bytes")
-                        return False
+                    if file_size <= 10000:  # At least 10KB
+                        raise RuntimeError(f"Generated file too small ({file_size} bytes) - likely corrupted or generation failed")
+                    
+                    print(f"  ✅ Wan2.2 B-roll generated: {output_path} ({file_size/1024:.1f}KB)")
+                    return True
                 else:
-                    print("  ❌ No output video file found")
-                    return False
+                    raise RuntimeError(f"No MP4 files found in Wan2.2 output directory: {self.wan22_path}")
             else:
-                print(f"  ❌ Wan2.2 generation failed:")
-                print(f"    stdout: {result.stdout}")
-                print(f"    stderr: {result.stderr}")
-                return False
+                error_msg = f"Wan2.2 generation failed (exit code {result.returncode})"
+                if result.stderr:
+                    error_msg += f"\nSTDERR: {result.stderr}"
+                if result.stdout:
+                    error_msg += f"\nSTDOUT: {result.stdout}"
+                raise RuntimeError(error_msg)
                 
         except subprocess.TimeoutExpired:
             print("  ⏱️ Wan2.2 generation timed out")
@@ -416,6 +418,8 @@ class ProductionBRollPipeline:
             
             # Generate B-roll videos
             successful_generations = 0
+            generation_errors = []
+            
             for i, region in enumerate(broll_regions, 1):
                 print(f"\n📹 Generating B-roll {i}/{len(broll_regions)}:")
                 print(f"  Time: {region.start_time:.1f}s - {region.end_time:.1f}s ({region.duration:.1f}s)")
@@ -423,18 +427,39 @@ class ProductionBRollPipeline:
                 
                 output_path = f"broll_{i}_{int(region.start_time)}s.mp4"
                 
-                success = self.generator.generate_broll_video(
-                    region.prompt,
-                    region.duration,
-                    output_path
-                )
-                
-                if success:
-                    region.broll_path = output_path
-                    successful_generations += 1
-                    print(f"  ✅ Generated: {output_path}")
-                else:
-                    print(f"  ❌ Failed to generate B-roll {i}")
+                try:
+                    success = self.generator.generate_broll_video(
+                        region.prompt,
+                        region.duration,
+                        output_path
+                    )
+                    
+                    if success:
+                        region.broll_path = output_path
+                        successful_generations += 1
+                        print(f"  ✅ Generated: {output_path}")
+                    else:
+                        error_msg = f"B-roll generation returned False for region {i}"
+                        generation_errors.append(error_msg)
+                        print(f"  ❌ {error_msg}")
+                        
+                except Exception as e:
+                    error_msg = f"Exception during B-roll {i} generation: {e}"
+                    generation_errors.append(error_msg)
+                    print(f"  ❌ {error_msg}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Check if we have any successful generations
+            if successful_generations == 0:
+                error_summary = f"All B-roll generation failed. Errors: {'; '.join(generation_errors)}"
+                raise RuntimeError(error_summary)
+            
+            # Warn if some generations failed
+            if generation_errors:
+                print(f"\n⚠️ {len(generation_errors)} B-roll generations failed:")
+                for error in generation_errors:
+                    print(f"  - {error}")
             
             # Generate final composite video
             print(f"\n✅ Successfully generated {successful_generations}/{len(broll_regions)} B-roll videos")

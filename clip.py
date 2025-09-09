@@ -513,74 +513,118 @@ def wrap_text(text, max_words=3):  # Updated to 3 words
 
 
 def overlay_captions(video_file, ass_file, output_file):
-    # Get input video dimensions
-    cap = cv2.VideoCapture(video_file)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
-
-    # Convert ASS file path to FFmpeg-safe format
-    ass_file_abs = os.path.abspath(ass_file)
-    ass_file_ffmpeg = ass_file_abs.replace('\\', '/').replace(':', '\\\\:')
-
-    # Check if video is already 9:16 format (portrait)
-    is_already_portrait = height > width
-    aspect_ratio = width / height if height > 0 else 1.0
-    
-    if is_already_portrait and abs(aspect_ratio - (9/16)) < 0.1:
-        # Video is already 9:16, just apply captions and enhancement
-        print(f"  📱 Video already 9:16 ({width}x{height}), applying captions only")
-        vf_filter = (
-            f"eq=contrast=1.2:saturation=1.5,"
-            f"hue=s=1.1,"
-            f"ass={ass_file_ffmpeg}"
-        )
-    else:
-        # Video is 16:9, need to crop and scale
-        print(f"  🔄 Converting {width}x{height} to 9:16 with captions")
+    try:
+        # Validate inputs
+        if not os.path.exists(video_file):
+            raise FileNotFoundError(f"Video file not found: {video_file}")
         
-        # Set crop size to not exceed video dimensions
-        pre_crop_height = min(1920, height)
-        pre_crop_width = int(pre_crop_height * 9 / 16)
-        pre_crop_width = min(pre_crop_width, width)
+        if not os.path.exists(ass_file):
+            raise FileNotFoundError(f"ASS caption file not found: {ass_file}")
+        
+        if not output_file:
+            raise ValueError("output_file cannot be empty")
+        
+        # Get input video dimensions
+        cap = cv2.VideoCapture(video_file)
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open video file: {video_file}")
+        
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        
+        if width <= 0 or height <= 0:
+            raise RuntimeError(f"Invalid video dimensions: {width}x{height}")
 
-        speaker_x = detect_speaker_center(video_file)
-        crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
-        crop_y = 0  # You can adjust this if you want vertical centering
+        # Convert ASS file path to FFmpeg-safe format
+        ass_file_abs = os.path.abspath(ass_file)
+        ass_file_ffmpeg = ass_file_abs.replace('\\', '/').replace(':', '\\\\:')
 
-        # FFmpeg video filter: crop -> upscale -> overlay ASS
-        vf_filter = (
-            f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
-            f"scale=2160:3840,"
-            f"eq=contrast=1.2:saturation=1.5,"
-            f"hue=s=1.1,"
-            f"ass={ass_file_ffmpeg}"
-        )
+        # Check if video is already 9:16 format (portrait)
+        is_already_portrait = height > width
+        aspect_ratio = width / height if height > 0 else 1.0
+        
+        if is_already_portrait and abs(aspect_ratio - (9/16)) < 0.1:
+            # Video is already 9:16, just apply captions and enhancement
+            print(f"  📱 Video already 9:16 ({width}x{height}), applying captions only")
+            vf_filter = (
+                f"eq=contrast=1.2:saturation=1.5,"
+                f"hue=s=1.1,"
+                f"ass={ass_file_ffmpeg}"
+            )
+        else:
+            # Video is 16:9, need to crop and scale
+            print(f"  🔄 Converting {width}x{height} to 9:16 with captions")
+            
+            # Set crop size to not exceed video dimensions
+            pre_crop_height = min(1920, height)
+            pre_crop_width = int(pre_crop_height * 9 / 16)
+            pre_crop_width = min(pre_crop_width, width)
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-hwaccel", "cuda",
-        "-i", video_file,
-        "-vf", vf_filter,
-        "-c:v", "h264_nvenc",
-        "-preset", "slow",
-        "-b:v", "12M",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-movflags", "+faststart",
-        output_file
-    ]
+            speaker_x = detect_speaker_center(video_file)
+            crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
+            crop_y = 0  # You can adjust this if you want vertical centering
 
-    print("FFmpeg filter:", vf_filter)
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        print(f"❌ FFmpeg error for {output_file}:\n{result.stderr}")
-        if os.path.exists(output_file):
-            os.remove(output_file)
-        return None
-    
-    print(f"✅ Successfully processed: {output_file}")
-    return output_file
+            # FFmpeg video filter: crop -> upscale -> overlay ASS
+            vf_filter = (
+                f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
+                f"scale=2160:3840,"
+                f"eq=contrast=1.2:saturation=1.5,"
+                f"hue=s=1.1,"
+                f"ass={ass_file_ffmpeg}"
+            )
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-hwaccel", "cuda",
+            "-i", video_file,
+            "-vf", vf_filter,
+            "-c:v", "h264_nvenc",
+            "-preset", "slow",
+            "-b:v", "12M",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            output_file
+        ]
+
+        print("FFmpeg filter:", vf_filter)
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        if result.returncode != 0:
+            error_msg = f"FFmpeg failed (exit code {result.returncode}) for {output_file}"
+            if result.stderr:
+                error_msg += f": {result.stderr}"
+            
+            # Clean up failed output
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except OSError:
+                    pass
+            
+            raise RuntimeError(error_msg)
+        
+        # Verify output file was created and has content
+        if not os.path.exists(output_file):
+            raise RuntimeError(f"Output file was not created: {output_file}")
+        
+        output_size = os.path.getsize(output_file)
+        if output_size < 10000:  # Less than 10KB
+            raise RuntimeError(f"Output file too small ({output_size} bytes) - likely corrupted")
+        
+        print(f"✅ Successfully processed: {output_file}")
+        return output_file
+        
+    except Exception as e:
+        print(f"❌ Caption overlay failed: {e}")
+        # Clean up any partial output
+        if 'output_file' in locals() and os.path.exists(output_file):
+            try:
+                os.remove(output_file)
+            except OSError:
+                pass
+        raise  # Re-raise the exception
 def is_super_significant_word(word):
     """
     Determine if a word is SUPER significant - the kind that makes people stop scrolling.
@@ -1081,13 +1125,29 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
     """Create final video with B-roll segments inserted at specific timestamps, then apply captions to everything"""
     
     try:
+        # Validate inputs
+        if not os.path.exists(original_video):
+            raise FileNotFoundError(f"Original video not found: {original_video}")
+        
+        if output_path is None:
+            raise ValueError("output_path cannot be None")
+        
         # Get video duration and dimensions
         result = subprocess.run([
             "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
             "-of", "csv=p=0", original_video
         ], capture_output=True, text=True)
         
-        total_duration = float(result.stdout.strip())
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to probe video duration: {result.stderr}")
+        
+        if not result.stdout.strip():
+            raise RuntimeError(f"No duration information found for video: {original_video}")
+        
+        try:
+            total_duration = float(result.stdout.strip())
+        except ValueError:
+            raise RuntimeError(f"Invalid duration format: {result.stdout.strip()}")
         
         # Get video dimensions
         result = subprocess.run([
@@ -1095,8 +1155,18 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             "-of", "csv=p=0", original_video
         ], capture_output=True, text=True)
         
-        dimensions = result.stdout.strip().split(',')
-        video_width, video_height = int(dimensions[0]), int(dimensions[1])
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to probe video dimensions: {result.stderr}")
+        
+        if not result.stdout.strip():
+            raise RuntimeError(f"No dimension information found for video: {original_video}")
+        
+        try:
+            dimensions = result.stdout.strip().split(',')
+            video_width, video_height = int(dimensions[0]), int(dimensions[1])
+        except (ValueError, IndexError):
+            raise RuntimeError(f"Invalid dimension format: {result.stdout.strip()}")
+        
         is_portrait = video_height > video_width
         
         print(f"    Video: {video_width}x{video_height} ({'9:16' if is_portrait else '16:9'})")
@@ -1110,6 +1180,15 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
                 import shutil
                 shutil.copy2(original_video, output_path)
                 return True
+        
+        # Validate B-roll files exist
+        missing_broll = []
+        for broll in broll_info:
+            if not os.path.exists(broll["path"]):
+                missing_broll.append(broll["path"])
+        
+        if missing_broll:
+            raise FileNotFoundError(f"B-roll files not found: {missing_broll}")
         
         # Filter and constrain B-roll segments
         # CONSTRAINT: B-roll every ~7 seconds, 2-3 seconds duration each
@@ -1244,46 +1323,71 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
-            print(f"    ❌ Composite creation failed: {result.stderr}")
-            # Fallback to original video with captions
-            if captions_file:
-                return overlay_captions(original_video, captions_file, output_path)
-            else:
-                import shutil
-                shutil.copy2(original_video, output_path)
-                return True
+            error_msg = f"Composite creation failed (exit code {result.returncode})"
+            if result.stderr:
+                error_msg += f". STDERR: {result.stderr}"
+            if result.stdout:
+                error_msg += f". STDOUT: {result.stdout}"
+            
+            print(f"    ❌ {error_msg}")
+            raise RuntimeError(error_msg)
+        
+        # Verify the composite file was created and has content
+        if not os.path.exists(composite_video):
+            raise RuntimeError(f"Composite video was not created: {composite_video}")
+        
+        composite_size = os.path.getsize(composite_video)
+        if composite_size < 10000:  # Less than 10KB
+            raise RuntimeError(f"Composite video too small ({composite_size} bytes) - likely corrupted")
         
         # Now apply captions to the composite video
         if captions_file:
             print(f"    📝 Applying captions to composite video...")
             captions_success = overlay_captions(composite_video, captions_file, output_path)
+            
+            if not captions_success:
+                raise RuntimeError("Caption overlay failed")
         else:
             # No captions, just rename composite to final output
             import shutil
-            shutil.move(composite_video, output_path)
+            try:
+                shutil.move(composite_video, output_path)
+            except Exception as e:
+                raise RuntimeError(f"Failed to move composite video to output path: {e}")
             captions_success = True
         
         # Clean up temporary composite file
         if os.path.exists(composite_video) and composite_video != output_path:
-            os.remove(composite_video)
+            try:
+                os.remove(composite_video)
+            except OSError as e:
+                print(f"    ⚠️ Warning: Could not remove temporary file {composite_video}: {e}")
         
-        if captions_success:
-            file_size = os.path.getsize(output_path) / (1024 * 1024)  # MB
-            print(f"    ✅ B-roll timeline created: {output_path} ({file_size:.1f}MB)")
-            return True
-        else:
-            print(f"    ❌ Caption overlay failed")
-            return False
+        # Verify final output exists and has content
+        if not os.path.exists(output_path):
+            raise RuntimeError(f"Final output was not created: {output_path}")
+        
+        final_size = os.path.getsize(output_path)
+        if final_size < 10000:  # Less than 10KB
+            raise RuntimeError(f"Final output too small ({final_size} bytes) - likely corrupted")
+        
+        file_size = final_size / (1024 * 1024)  # MB
+        print(f"    ✅ B-roll timeline created: {output_path} ({file_size:.1f}MB)")
+        return True
             
     except Exception as e:
         print(f"    ❌ Error in B-roll timeline creation: {e}")
-        # Fallback to original method
-        if captions_file:
-            return overlay_captions(original_video, captions_file, output_path)
-        else:
-            import shutil
-            shutil.copy2(original_video, output_path)
-            return True
+        import traceback
+        traceback.print_exc()
+        
+        # Clean up any temporary files
+        if 'composite_video' in locals() and os.path.exists(composite_video) and composite_video != output_path:
+            try:
+                os.remove(composite_video)
+            except OSError:
+                pass
+        
+        raise  # Re-raise the exception instead of returning False
 
 
 def main(video_path, output_dir=None):
@@ -1506,24 +1610,37 @@ def main(video_path, output_dir=None):
         final_out = os.path.join(CLIPS_DIR, f"clip_{i+1}_captioned.mp4")
         print(f"[7b] Creating timeline with B-roll and captions for clip {i+1}")
         
-        video_created = create_video_with_broll_integration(
-            cropped_video,     # Start with uncaptioned cropped video
-            broll_files,       # B-roll segments with timing info
-            ass_file,          # Apply captions to final composite
-            final_out          # Final output
-        )
-        
-        # Clean up intermediate cropped video
-        if os.path.exists(cropped_video):
-            os.remove(cropped_video)
-        
-        if video_created:
-            if broll_files:
-                print(f"✅ Clip {i+1} completed with {len(broll_files)} B-roll segments: {final_out}")
+        try:
+            video_created = create_video_with_broll_integration(
+                cropped_video,     # Start with uncaptioned cropped video
+                broll_files,       # B-roll segments with timing info
+                ass_file,          # Apply captions to final composite
+                final_out          # Final output
+            )
+            
+            # Clean up intermediate cropped video
+            if os.path.exists(cropped_video):
+                os.remove(cropped_video)
+            
+            if video_created:
+                if broll_files:
+                    print(f"✅ Clip {i+1} completed with {len(broll_files)} B-roll segments: {final_out}")
+                else:
+                    print(f"✅ Clip {i+1} completed: {final_out}")
             else:
-                print(f"✅ Clip {i+1} completed: {final_out}")
-        else:
-            print(f"❌ Failed to create final video for clip {i+1}")
+                raise RuntimeError(f"create_video_with_broll_integration returned False for clip {i+1}")
+                
+        except Exception as e:
+            # Clean up intermediate cropped video on error
+            if os.path.exists(cropped_video):
+                os.remove(cropped_video)
+            
+            print(f"❌ Failed to create final video for clip {i+1}: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Don't continue with other clips if this one failed
+            raise RuntimeError(f"Clip {i+1} processing failed: {e}")
     
     print("\n🎉 All clips processed successfully!")
     print(f"📁 Video clips: {CLIPS_DIR}/")
