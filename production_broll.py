@@ -307,26 +307,21 @@ class Wan22VideoGenerator:
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
                 tmp_output = tmp_file.name
             
-            # Build Wan2.2 command with torchrun for multi-GPU
+            # Build Wan2.2 command
             cmd = [
-                "torchrun",
-                "--nproc_per_node=4",  # Use 4 GPUs
+                "python", 
                 str(Path(self.wan22_path) / "generate.py"),
                 "--task", config["task"],
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
                 "--prompt", prompt,
                 "--offload_model", "True",
-                "--convert_model_dtype",
-                "--dit_fsdp",  # Enable FSDP for DiT model
-                "--t5_fsdp",   # Enable FSDP for T5 model
-                "--ulysses_size", "4"  # Match number of GPUs
+                "--convert_model_dtype"
             ]
             
-            # Add t5_cpu for 5B model to save memory (remove since we're using t5_fsdp)
-            # Note: t5_fsdp handles T5 distribution, so t5_cpu may not be needed
-            # if self.model_type == "ti2v-5B":
-            #     cmd.extend(["--t5_cpu"])
+            # Add t5_cpu for 5B model to save memory
+            if self.model_type == "ti2v-5B":
+                cmd.extend(["--t5_cpu"])
             
             # Add prompt extension if API key is available
             dash_api_key = os.getenv("DASH_API_KEY")
