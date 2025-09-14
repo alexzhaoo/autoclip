@@ -303,9 +303,9 @@ class Wan22VideoGenerator:
             workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
             model_dir = workspace_dir / model_name_map[self.model_type]
             
-            # Create temporary output path for Wan2.2
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
-                tmp_output = tmp_file.name
+            # Create output directory if it doesn't exist
+            output_dir = Path(output_path).parent
+            output_dir.mkdir(parents=True, exist_ok=True)
             
             # Build Wan2.2 command
             cmd = [
@@ -315,48 +315,101 @@ class Wan22VideoGenerator:
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
                 "--prompt", prompt,
+                "--offload_model", "True",
                 "--convert_model_dtype"
-                # Removed --offload_model to test if it reduces startup delay
             ]
             
             # Add t5_cpu for 5B model to save memory
             if self.model_type == "ti2v-5B":
                 cmd.extend(["--t5_cpu"])
             
+            # Add prompt extension if API key is available
+            dash_api_key = os.getenv("DASH_API_KEY")
+            if dash_api_key:
+                cmd.extend([
+                    "--use_prompt_extend",
+                    "--prompt_extend_method", "dashscope"
+                ])
+            
             print(f"    🔧 Running: {' '.join(cmd[:6])}... (full command with {len(cmd)} args)")
+            print(f"    📂 Working directory: {self.wan22_path}")
+            
+            # Record existing MP4 files before generation to identify new ones
+            wan22_dir = Path(self.wan22_path)
+            existing_files = set()
+            
+            # Check multiple possible output locations
+            search_dirs = [
+                wan22_dir,  # Main Wan2.2 directory
+                wan22_dir / "output",  # Common output subdirectory 
+                wan22_dir / "outputs",  # Alternative output subdirectory
+                wan22_dir / "generated",  # Alternative output subdirectory
+            ]
+            
+            for search_dir in search_dirs:
+                if search_dir.exists():
+                    existing_files.update(search_dir.glob("**/*.mp4"))
+            
+            print(f"    📊 Found {len(existing_files)} existing MP4 files before generation")
             
             # Set environment
             env = os.environ.copy()
             env["PYTHONPATH"] = self.wan22_path
+            if dash_api_key:
+                env["DASH_API_KEY"] = dash_api_key
             
             print("    ⏳ Starting Wan2.2 generation (model loading may take 30-120 seconds)...")
             start_time = time.time()
             
-            # Run generation with real-time output to see progress
+            # Run generation with real-time output to see progress and debug file locations
             result = subprocess.run(
                 cmd,
                 cwd=self.wan22_path,
                 env=env,
-                capture_output=False,
+                capture_output=False,  # Allow real-time output to see where files are created
                 text=True,
-                timeout=1200
+                timeout=1200  # 20 minute timeout
             )
             
+            elapsed_time = time.time() - start_time
+            print(f"    ⏱️ Generation process completed in {elapsed_time:.1f} seconds (exit code: {result.returncode})")
+            
             if result.returncode == 0:
-                elapsed_time = time.time() - start_time
-                print(f"    ⏱️ Generation completed in {elapsed_time:.1f} seconds")
+                # Find new MP4 files created during generation
+                new_files = set()
+                for search_dir in search_dirs:
+                    if search_dir.exists():
+                        new_files.update(search_dir.glob("**/*.mp4"))
                 
-                # Find the generated video file
-                generated_files = list(Path(self.wan22_path).glob("*.mp4"))
+                generated_files = list(new_files - existing_files)
+                
+                print(f"    🔍 Found {len(generated_files)} new MP4 files after generation")
+                for f in generated_files:
+                    file_size = f.stat().st_size if f.exists() else 0
+                    print(f"        📹 {f} ({file_size/1024:.1f}KB)")
+                
                 if generated_files:
                     # Get the most recent video file
                     latest_video = max(generated_files, key=lambda p: p.stat().st_mtime)
                     
+                    print(f"    📁 Using latest generated file: {latest_video}")
+                    
                     # Move to desired output path
                     try:
                         shutil.move(str(latest_video), output_path)
+                        print(f"    📦 Moved file to: {output_path}")
                     except Exception as e:
-                        raise RuntimeError(f"Failed to move generated video from {latest_video} to {output_path}: {e}")
+                        # If move fails, try copy instead
+                        try:
+                            shutil.copy2(str(latest_video), output_path)
+                            print(f"    📦 Copied file to: {output_path}")
+                            # Try to remove original after successful copy
+                            try:
+                                latest_video.unlink()
+                            except:
+                                pass  # Don't fail if we can't clean up
+                        except Exception as e2:
+                            raise RuntimeError(f"Failed to move/copy generated video from {latest_video} to {output_path}: {e2}")
                     
                     # Verify file exists and has content
                     if not os.path.exists(output_path):
@@ -366,16 +419,24 @@ class Wan22VideoGenerator:
                     if file_size <= 10000:  # At least 10KB
                         raise RuntimeError(f"Generated file too small ({file_size} bytes) - likely corrupted or generation failed")
                     
-                    print(f"  ✅ Wan2.2 B-roll generated: {output_path} ({file_size/1024:.1f}KB)")
+                    print(f"  ✅ Wan2.2 B-roll generated successfully: {output_path} ({file_size/1024:.1f}KB)")
                     return True
                 else:
-                    raise RuntimeError(f"No MP4 files found in Wan2.2 output directory: {self.wan22_path}")
+                    # No new files found - provide detailed debugging info
+                    print(f"    ❌ No new MP4 files found after generation!")
+                    print(f"    🔍 Searched directories:")
+                    for search_dir in search_dirs:
+                        if search_dir.exists():
+                            all_files = list(search_dir.glob("**/*"))
+                            mp4_files = list(search_dir.glob("**/*.mp4"))
+                            print(f"        📂 {search_dir}: {len(all_files)} total files, {len(mp4_files)} MP4 files")
+                        else:
+                            print(f"        📂 {search_dir}: (doesn't exist)")
+                    
+                    raise RuntimeError(f"No new MP4 files found in expected directories after successful generation")
             else:
                 error_msg = f"Wan2.2 generation failed (exit code {result.returncode})"
-                if result.stderr:
-                    error_msg += f"\nSTDERR: {result.stderr}"
-                if result.stdout:
-                    error_msg += f"\nSTDOUT: {result.stdout}"
+                print(f"    ❌ {error_msg}")
                 raise RuntimeError(error_msg)
                 
         except subprocess.TimeoutExpired:
@@ -384,13 +445,6 @@ class Wan22VideoGenerator:
         except Exception as e:
             print(f"  ❌ Wan2.2 generation error: {e}")
             return False
-        finally:
-            # Clean up temporary files
-            if 'tmp_output' in locals() and os.path.exists(tmp_output):
-                try:
-                    os.unlink(tmp_output)
-                except OSError:
-                    pass
 
 class ProductionBRollPipeline:
     """Complete production B-roll pipeline with Wan2.2 integration"""
@@ -524,6 +578,7 @@ def setup_wan22_environment():
     print(f"   export WAN22_PATH={wan22_path}")
     print(f"   export WAN22_MODEL={model_type}")
     print("   export OPENAI_API_KEY=your_openai_api_key")
+    print("   export DASH_API_KEY=your_dashscope_api_key  # Optional, for prompt extension")
     
     print(f"\n4. Test installation:")
     print("   python -c \"from wan22_broll import create_production_pipeline; pipeline = create_production_pipeline()\"")
@@ -570,3 +625,4 @@ if __name__ == "__main__":
     print("- Use --setup to see installation instructions")
     print("- Use --model ti2v-5B for consumer GPUs (RTX 4090)")  
     print("- Use --model t2v-A14B for high-end GPUs (A100/H100)")
+    print("- Set DASH_API_KEY for enhanced prompt generation")
