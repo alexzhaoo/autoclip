@@ -315,41 +315,37 @@ class Wan22VideoGenerator:
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
                 "--prompt", prompt,
-                "--offload_model", "True",
                 "--convert_model_dtype"
+                # Removed --offload_model to test if it reduces startup delay
             ]
             
             # Add t5_cpu for 5B model to save memory
             if self.model_type == "ti2v-5B":
                 cmd.extend(["--t5_cpu"])
             
-            # Add prompt extension if API key is available
-            dash_api_key = os.getenv("DASH_API_KEY")
-            if dash_api_key:
-                cmd.extend([
-                    "--use_prompt_extend",
-                    "--prompt_extend_method", "dashscope"
-                ])
-            
             print(f"    🔧 Running: {' '.join(cmd[:6])}... (full command with {len(cmd)} args)")
             
             # Set environment
             env = os.environ.copy()
             env["PYTHONPATH"] = self.wan22_path
-            if dash_api_key:
-                env["DASH_API_KEY"] = dash_api_key
             
-            # Run generation with timeout
+            print("    ⏳ Starting Wan2.2 generation (model loading may take 30-120 seconds)...")
+            start_time = time.time()
+            
+            # Run generation with real-time output to see progress
             result = subprocess.run(
                 cmd,
                 cwd=self.wan22_path,
                 env=env,
-                capture_output=True,
+                capture_output=False,
                 text=True,
-                timeout=1200  # 20 minute timeout
+                timeout=1200
             )
             
             if result.returncode == 0:
+                elapsed_time = time.time() - start_time
+                print(f"    ⏱️ Generation completed in {elapsed_time:.1f} seconds")
+                
                 # Find the generated video file
                 generated_files = list(Path(self.wan22_path).glob("*.mp4"))
                 if generated_files:
@@ -528,7 +524,6 @@ def setup_wan22_environment():
     print(f"   export WAN22_PATH={wan22_path}")
     print(f"   export WAN22_MODEL={model_type}")
     print("   export OPENAI_API_KEY=your_openai_api_key")
-    print("   export DASH_API_KEY=your_dashscope_api_key  # Optional, for prompt extension")
     
     print(f"\n4. Test installation:")
     print("   python -c \"from wan22_broll import create_production_pipeline; pipeline = create_production_pipeline()\"")
@@ -575,4 +570,3 @@ if __name__ == "__main__":
     print("- Use --setup to see installation instructions")
     print("- Use --model ti2v-5B for consumer GPUs (RTX 4090)")  
     print("- Use --model t2v-A14B for high-end GPUs (A100/H100)")
-    print("- Set DASH_API_KEY for enhanced prompt generation")
