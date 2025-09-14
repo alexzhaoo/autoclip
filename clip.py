@@ -1358,17 +1358,19 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             filter_parts.append(overlay_filter)
             current_label = f"[{overlay_out}]"
         
-        # Final output from overlay chain
-        filter_parts.append(f"{current_label.strip('[]')}[composite_video]")
+        # Final output from overlay chain is already in current_label
+        # Just use the current_label directly as the composite_video output
+        composite_output_label = current_label.strip('[]')
         
         filter_complex = ";".join(filter_parts)
+        print(f"    🔧 Filter chain: {filter_complex[:200]}..." if len(filter_complex) > 200 else f"    🔧 Filter chain: {filter_complex}")
         
         # Create composite video (without captions) - IMPROVED QUALITY SETTINGS
         cmd = [
             "ffmpeg", "-y",
             *inputs,
             "-filter_complex", filter_complex,
-            "-map", "[composite_video]",
+            "-map", f"[{composite_output_label}]",
             "-map", "0:a",  # Keep original audio track (maintains perfect sync)
             "-c:a", "copy",  # Copy audio without re-encoding
             "-c:v", "libx264",
