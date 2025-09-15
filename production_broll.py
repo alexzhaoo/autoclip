@@ -366,9 +366,9 @@ class Wan22VideoGenerator:
                 cmd,
                 cwd=self.wan22_path,
                 env=env,
-                capture_output=False,  # Allow real-time output to see where files are created
+                capture_output= True,  # Allow real-time output to see where files are created
                 text=True,
-                timeout=1200  # 20 minute timeout
+                timeout=1500  # 25 minute timeout
             )
             
             elapsed_time = time.time() - start_time
