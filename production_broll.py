@@ -107,46 +107,39 @@ class ProductionBRollAnalyzer:
         
         # Enhanced prompt optimized for Wan2.2 generation
         prompt = f"""
-        Analyze this video transcript and identify 2-3 specific moments where B-roll footage would enhance viewer engagement.
+            Analyze this video transcript and identify 2–3 short B-roll opportunities (1–2 s) that enhance viewer engagement.
+            TRANSCRIPT: {transcript_text}
+            For each, provide:
 
-        TRANSCRIPT:
-        {transcript_text}
+            START_TIME – when B-roll starts (s from chunk start)
+            END_TIME – when it ends
+            VISUAL_PROMPT – vivid, cinematic description for Wan2.2 text-to-video
 
-        For each B-roll opportunity, provide:
-        1. START_TIME: When to start B-roll (in seconds from chunk beginning)
-        2. END_TIME: When to end B-roll  
-        3. VISUAL_PROMPT: Detailed description optimized for Wan2.2 text-to-video model
-        4. REASON: Why this moment needs B-roll
 
-        Requirements for VISUAL_PROMPT (optimized for Wan2.2):
-        - Highly detailed, cinematic descriptions suitable for AI video generation
-        - Choose from these visual categories based on content:
-          * Scientific: molecules, cells, brain activity, biological processes
-          * Abstract: geometric patterns, flowing energy, conceptual animations
-          * Nature: landscapes, weather, organic textures, natural phenomena
-          * Lifestyle: hands working, objects in motion, daily activities (no faces)
-          * Technology: digital interfaces, data visualization, futuristic concepts
-          * Artistic: paint mixing, ink flowing, creative processes, artistic textures
-        - Avoid human faces or talking people (audio continues over B-roll)
-        - Include specific camera movements, lighting, and visual style cues
-        - Mention colors, textures, and motion patterns
-        - Target 1-2 second segments for optimal quality
-        - Use cinematic terminology (close-up, wide shot, tracking shot, etc.)
+            VISUAL_PROMPT guidance:
+            Suggest clear, engaging visuals that match the idea in the transcript — scenes, people, objects, environments, or subtle abstract elements.
+            Faces and people are allowed but optional; avoid perfect lip-sync to narration.
+            Use a mix of visual moods as appropriate
+            Lifestyle & work scenes
+            Technology & interfaces
+            Nature & outdoors
+            Creative processes / crafts
+            Light abstract or motion graphics (only if concept is very intangible)
+            Describe camera angle (close-up, wide, tracking), lighting, color, and textures.
+            Keep prompts short but specific for 1–2 s cinematic clips.
+            
+            Example VISUAL_PROMPTs:
+            Close-up of hands typing on a laptop in a bright café, shallow focus, smooth dolly in.
+            Medium shot of a person explaining data on a tablet to a colleague, warm daylight.
+            Wide shot of rolling hills at sunrise, soft mist, gentle pan.
+            Abstract slow-motion particles drifting across a dark background, subtle glow.
 
-        Examples of excellent Wan2.2 prompts for different categories:
-        - Scientific: "Cinematic close-up of cortisol stress hormone molecules floating through bloodstream, ethereal blue and white scientific visualization with soft volumetric lighting, slow motion particles"
-        - Abstract: "Flowing golden energy streams forming geometric patterns against deep purple background, smooth camera rotation, ethereal particle effects, cinematic lighting"
-        - Nature: "Macro shot of morning dew droplets on green grass blades, soft natural lighting, gentle breeze movement, shallow depth of field, peaceful atmosphere"
-        - Lifestyle: "Close-up of hands writing in notebook with pen, warm lighting, shallow focus on paper texture, smooth camera movement, cozy atmosphere"
-        - Technology: "3D holographic data visualization with floating charts and graphs, blue and cyan color palette, smooth camera orbit, futuristic interface elements"
-    
         Return ONLY a JSON array:
         [
           {{
             "start_time": 2.5,
             "end_time": 5.0,
             "visual_prompt": "detailed cinematic prompt here",
-            "reason": "explanation here"
           }}
         ]
         """
@@ -212,30 +205,24 @@ class ProductionBRollAnalyzer:
 class Wan22VideoGenerator:
     """Wan2.2 video generator with multiple model support"""
     
-    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B"):
+    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "9:16"):
         self.wan22_path = wan22_path or os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2")
         self.model_type = model_type
+        self.aspect_ratio = aspect_ratio
         
-        # Model configurations
-        self.model_configs = {
-            "t2v-A14B": {
-                "task": "t2v-A14B",
-                "size": "1280*720",
-                "min_vram": 80,
-                "description": "High-quality text-to-video, 14B parameters"
-            },
-            "i2v-A14B": {
-                "task": "i2v-A14B", 
-                "size": "1280*720",
-                "min_vram": 80,
-                "description": "High-quality image-to-video, 14B parameters"
-            },
-            "ti2v-5B": {
-                "task": "ti2v-5B",
-                "size": "1280*704", 
-                "min_vram": 24,
-                "description": "Text/Image-to-video, 5B parameters, RTX 4090 compatible"
-            }
+        # ti2v-5B model configuration with dynamic aspect ratio support
+        if aspect_ratio == "9:16":
+            size = "720*1280"    # 9:16 portrait for TikTok/Reels
+            aspect_desc = "9:16 portrait"
+        else:
+            size = "1280*720"    # 16:9 landscape
+            aspect_desc = "16:9 landscape"
+        
+        self.model_config = {
+            "task": "ti2v-5B",
+            "size": size,
+            "min_vram": 24,
+            "description": f"Text/Image-to-video, 5B parameters, RTX 4090 compatible, {aspect_desc}"
         }
         
         # Validate Wan2.2 installation
@@ -246,8 +233,8 @@ class Wan22VideoGenerator:
         
         print("🎬 Wan2.2 Video Generator ready:")
         print(f"  - Wan2.2 path: {self.wan22_path}")
-        print(f"  - Model type: {model_type} ({self.model_configs[model_type]['description']})")
-        print(f"  - Wan2.2 validated: ✅")
+        print(f"  - Model: {model_type} ({self.model_config['description']})")
+        print("  - Wan2.2 validated: ✅")
     
     def _validate_wan22_installation(self) -> bool:
         """Validate Wan2.2 installation and model availability"""
@@ -262,20 +249,13 @@ class Wan22VideoGenerator:
             if not generate_script.exists():
                 raise FileNotFoundError(f"generate.py not found in {self.wan22_path}")
             
-            # Check if model directory exists
-            model_name_map = {
-                "t2v-A14B": "Wan2.2-T2V-A14B",
-                "i2v-A14B": "Wan2.2-I2V-A14B", 
-                "ti2v-5B": "Wan2.2-TI2V-5B"
-            }
-            
-            # Model is in workspace root, not inside Wan2.2 directory
+            # Check if ti2v-5B model directory exists
             workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
-            model_dir = workspace_dir / model_name_map[self.model_type]
+            model_dir = workspace_dir / "Wan2.2-TI2V-5B"
             if not model_dir.exists():
-                raise FileNotFoundError(f"Model directory not found: {model_dir}. Please download the {self.model_type} model to {model_dir}")
+                raise FileNotFoundError(f"Model directory not found: {model_dir}. Please download the ti2v-5B model to {model_dir}")
             
-            print(f"✅ Wan2.2 installation validated: {self.model_type}")
+            print("✅ Wan2.2 installation validated: ti2v-5B")
             return True
             
         except Exception as e:
@@ -290,24 +270,19 @@ class Wan22VideoGenerator:
         return self._generate_with_wan22(prompt, duration, output_path)
     
     def _generate_with_wan22(self, prompt: str, duration: float, output_path: str) -> bool:
-        """Generate video using Wan2.2 models"""
+        """Generate video using Wan2.2 ti2v-5B model"""
         try:
-            config = self.model_configs[self.model_type]
-            model_name_map = {
-                "t2v-A14B": "Wan2.2-T2V-A14B",
-                "i2v-A14B": "Wan2.2-I2V-A14B", 
-                "ti2v-5B": "Wan2.2-TI2V-5B"
-            }
+            config = self.model_config
             
             # Model is in workspace root, not inside Wan2.2 directory
             workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
-            model_dir = workspace_dir / model_name_map[self.model_type]
+            model_dir = workspace_dir / "Wan2.2-TI2V-5B"
             
             # Create output directory if it doesn't exist
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
             
-            # Build Wan2.2 command
+            # Build Wan2.2 command with RTX 5090 optimizations
             cmd = [
                 "python", 
                 str(Path(self.wan22_path) / "generate.py"),
@@ -315,13 +290,14 @@ class Wan22VideoGenerator:
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
                 "--prompt", prompt,
-                "--offload_model", "True",
+                "--offload_model", "False",  # Keep model in VRAM for RTX 5090
                 "--convert_model_dtype"
             ]
             
-            # Add t5_cpu for 5B model to save memory
-            if self.model_type == "ti2v-5B":
-                cmd.extend(["--t5_cpu"])
+            # For RTX 5090 (24GB+), keep T5 on GPU for better performance
+            # Only use t5_cpu if you have memory issues
+            # if self.model_type == "ti2v-5B":
+            #     cmd.extend(["--t5_cpu"])
             
             # Add prompt extension if API key is available
             dash_api_key = os.getenv("DASH_API_KEY")
@@ -366,7 +342,7 @@ class Wan22VideoGenerator:
                 cmd,
                 cwd=self.wan22_path,
                 env=env,
-                capture_output= True,  # Allow real-time output to see where files are created
+                capture_output=False,  # Enable real-time output to monitor progress
                 text=True,
                 timeout=1500  # 25 minute timeout
             )
@@ -449,11 +425,12 @@ class Wan22VideoGenerator:
 class ProductionBRollPipeline:
     """Complete production B-roll pipeline with Wan2.2 integration"""
     
-    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B"):
+    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "9:16"):
         self.analyzer = ProductionBRollAnalyzer()
-        self.generator = Wan22VideoGenerator(wan22_path, model_type)
+        self.generator = Wan22VideoGenerator(wan22_path, model_type, aspect_ratio)
         self.wan22_path = wan22_path
         self.model_type = model_type
+        self.aspect_ratio = aspect_ratio
     
     def process_clip(self, clip_data: Dict) -> bool:
         """Process a complete clip with B-roll generation"""
@@ -541,13 +518,15 @@ class ProductionBRollPipeline:
 PRODUCTION_CONFIG = {
     "wan22_path": os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2"),
     "model_type": os.getenv("WAN22_MODEL", "ti2v-5B"),  # ti2v-5B, t2v-A14B, i2v-A14B
+    "aspect_ratio": os.getenv("BROLL_ASPECT_RATIO", "9:16"),  # 9:16 for TikTok/Reels, 16:9 for landscape
 }
 
 def create_production_pipeline() -> ProductionBRollPipeline:
     """Factory function to create production B-roll pipeline with Wan2.2"""
     return ProductionBRollPipeline(
         wan22_path=PRODUCTION_CONFIG["wan22_path"],
-        model_type=PRODUCTION_CONFIG["model_type"]
+        model_type=PRODUCTION_CONFIG["model_type"],
+        aspect_ratio=PRODUCTION_CONFIG["aspect_ratio"]
     )
 
 def setup_wan22_environment():
@@ -556,44 +535,34 @@ def setup_wan22_environment():
     print("=" * 50)
     
     wan22_path = PRODUCTION_CONFIG["wan22_path"]
-    model_type = PRODUCTION_CONFIG["model_type"]
     
     print(f"1. Clone Wan2.2 repository to: {wan22_path}")
     print("   git clone https://github.com/Wan-Video/Wan2.2.git")
     print("   cd Wan2.2")
     print("   pip install -r requirements.txt")
     
-    print(f"\n2. Download {model_type} model:")
-    if model_type == "ti2v-5B":
-        print("   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B")
-        print("   (Requires ~24GB VRAM, works with RTX 4090)")
-    elif model_type == "t2v-A14B":
-        print("   huggingface-cli download Wan-AI/Wan2.2-T2V-A14B --local-dir ./Wan2.2-T2V-A14B")
-        print("   (Requires ~80GB VRAM, high-end GPU needed)")
-    elif model_type == "i2v-A14B":
-        print("   huggingface-cli download Wan-AI/Wan2.2-I2V-A14B --local-dir ./Wan2.2-I2V-A14B")
-        print("   (Requires ~80GB VRAM, high-end GPU needed)")
+    print("\n2. Download ti2v-5B model:")
+    print("   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B")
+    print("   (Requires ~24GB VRAM, works with RTX 4090)")
     
-    print(f"\n3. Set environment variables:")
+    print("\n3. Set environment variables:")
     print(f"   export WAN22_PATH={wan22_path}")
-    print(f"   export WAN22_MODEL={model_type}")
+    print("   export WAN22_MODEL=ti2v-5B")
+    print("   export BROLL_ASPECT_RATIO=9:16  # Use 9:16 for TikTok/Reels, 16:9 for landscape")
     print("   export OPENAI_API_KEY=your_openai_api_key")
     print("   export DASH_API_KEY=your_dashscope_api_key  # Optional, for prompt extension")
     
-    print(f"\n4. Test installation:")
-    print("   python -c \"from wan22_broll import create_production_pipeline; pipeline = create_production_pipeline()\"")
+    print("\n4. Test installation:")
+    print("   python -c \"from production_broll import create_production_pipeline; pipeline = create_production_pipeline()\"")
     
-    print(f"\nRecommended GPU requirements:")
-    print("- ti2v-5B: RTX 4090 (24GB VRAM) or better")
-    print("- t2v-A14B/i2v-A14B: A100 (80GB VRAM) or H100")
+    print("\nRecommended GPU requirements:")
+    print("- RTX 4090 (24GB VRAM) or better for ti2v-5B model")
 
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Production B-roll Generator with Wan2.2")
+    parser = argparse.ArgumentParser(description="Production B-roll Generator with Wan2.2 ti2v-5B")
     parser.add_argument("--setup", action="store_true", help="Show setup instructions")
-    parser.add_argument("--model", choices=["ti2v-5B", "t2v-A14B", "i2v-A14B"], 
-                       default="ti2v-5B", help="Wan2.2 model to use")
     
     args = parser.parse_args()
     
@@ -601,12 +570,8 @@ if __name__ == "__main__":
         setup_wan22_environment()
         exit(0)
     
-    # Update config based on args
-    PRODUCTION_CONFIG["model_type"] = args.model
-    
-    print("🎬 Production B-roll System with Wan2.2")
+    print("🎬 Production B-roll System with Wan2.2 ti2v-5B")
     print("=" * 50)
-    print(f"Model: {args.model}")
     
     try:
         pipeline = create_production_pipeline()
@@ -623,6 +588,5 @@ if __name__ == "__main__":
         
     print("\n💡 Tips:")
     print("- Use --setup to see installation instructions")
-    print("- Use --model ti2v-5B for consumer GPUs (RTX 4090)")  
-    print("- Use --model t2v-A14B for high-end GPUs (A100/H100)")
+    print("- Set BROLL_ASPECT_RATIO=9:16 for TikTok/Reels (default)")
     print("- Set DASH_API_KEY for enhanced prompt generation")

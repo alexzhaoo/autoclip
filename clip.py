@@ -116,7 +116,8 @@ elevenlabs = ElevenLabs(
 broll_pipeline = None
 if BROLL_AVAILABLE:
     try:
-        broll_pipeline = ProductionBRollPipeline()
+        from production_broll import create_production_pipeline
+        broll_pipeline = create_production_pipeline()
         print("✅ B-roll pipeline initialized")
     except Exception as e:
         print(f"⚠️ B-roll pipeline initialization failed: {e}")
@@ -1342,19 +1343,20 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             broll_label = f"broll{i}"
             overlay_out = f"overlay{i}"
             
-            # Scale B-roll to match video dimensions and prepare for overlay
+            # Scale B-roll to match video dimensions and prepare for overlay with proper timing
+            # OPTIMIZED: B-roll is now generated in 9:16 portrait format (704x1280 or 720x1280)
+            broll_duration = broll['end_time'] - broll['start_time']
+            
+            # B-roll should already be in correct aspect ratio, just scale to match target dimensions
+            scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}"
+            
             filter_parts.append(
-                f"[{broll_input}:v]scale={video_width}:{video_height}:force_original_aspect_ratio=increase,"
-                f"crop={video_width}:{video_height},fps=30,setpts=PTS-STARTPTS[{broll_label}]"
+                f"[{broll_input}:v]{scale_filter},fps=30,loop=-1:size=1:start=0,"
+                f"trim=duration={broll_duration:.3f},setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
             )
             
-            # Create overlay with fade-in/fade-out for smooth transitions
-            fade_duration = 0.3  # 0.3 second fade
-            overlay_filter = (
-                f"{current_label}[{broll_label}]overlay="
-                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})'"
-                f"[{overlay_out}]"
-            )
+            # Create overlay - the B-roll is now properly timed to the main video timeline
+            overlay_filter = f"{current_label}[{broll_label}]overlay[{overlay_out}]"
             filter_parts.append(overlay_filter)
             current_label = f"[{overlay_out}]"
         
