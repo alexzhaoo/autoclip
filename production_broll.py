@@ -292,7 +292,7 @@ class Wan22VideoGenerator:
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
                 "--prompt", prompt,
-                "--offload_model", "False",  # Keep model in VRAM for RTX 5090
+                "--offload_model", "True",  # Keep model in VRAM for RTX 5090
                 "--convert_model_dtype"
             ]
             
