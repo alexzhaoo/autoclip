@@ -114,6 +114,7 @@ class ProductionBRollAnalyzer:
             START_TIME – when B-roll starts (s from chunk start)
             END_TIME – when it ends
             VISUAL_PROMPT – vivid, cinematic description for Wan2.2 text-to-video
+            reason - why this clip fits
 
 
             VISUAL_PROMPT guidance:
@@ -127,7 +128,7 @@ class ProductionBRollAnalyzer:
             Light abstract or motion graphics (only if concept is very intangible)
             Describe camera angle (close-up, wide, tracking), lighting, color, and textures.
             Keep prompts short but specific for 1–2 s cinematic clips.
-            
+
             Example VISUAL_PROMPTs:
             Close-up of hands typing on a laptop in a bright café, shallow focus, smooth dolly in.
             Medium shot of a person explaining data on a tablet to a colleague, warm daylight.
@@ -140,6 +141,7 @@ class ProductionBRollAnalyzer:
             "start_time": 2.5,
             "end_time": 5.0,
             "visual_prompt": "detailed cinematic prompt here",
+            "reason": "brief reason here"
           }}
         ]
         """
