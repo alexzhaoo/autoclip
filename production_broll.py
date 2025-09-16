@@ -214,10 +214,10 @@ class Wan22VideoGenerator:
         
         # ti2v-5B model configuration with dynamic aspect ratio support
         if aspect_ratio == "9:16":
-            size = "720*1280"    # 9:16 portrait for TikTok/Reels
+            size = "704*1280"    # 9:16 portrait for TikTok/Reels
             aspect_desc = "9:16 portrait"
         else:
-            size = "1280*720"    # 16:9 landscape
+            size = "1280*704"    # 16:9 landscape
             aspect_desc = "16:9 landscape"
         
         self.model_config = {
