@@ -107,7 +107,7 @@ class ProductionBRollAnalyzer:
         
         # Enhanced prompt optimized for Wan2.2 generation
         prompt = f"""
-            Analyze this video transcript and identify 2–3 short B-roll opportunities (1–2 s) that enhance viewer engagement.
+            Analyze this video transcript and identify 4-5 short B-roll opportunities (1 seconds) that enhance viewer engagement.
             TRANSCRIPT: {transcript_text}
             For each, provide:
 
@@ -117,23 +117,28 @@ class ProductionBRollAnalyzer:
             reason - why this clip fits
 
 
-            VISUAL_PROMPT guidance:
-            Suggest clear, engaging visuals that match the idea in the transcript — scenes, people, objects, environments, or subtle abstract elements.
-            Faces and people are allowed but optional; avoid perfect lip-sync to narration.
-            Use a mix of visual moods as appropriate
-            Lifestyle & work scenes
-            Technology & interfaces
-            Nature & outdoors
-            Creative processes / crafts
-            Light abstract or motion graphics (only if concept is very intangible)
-            Describe camera angle (close-up, wide, tracking), lighting, color, and textures.
-            Keep prompts short but specific for 1–2 s cinematic clips.
+          VISUAL_PROMPT guidance:
+            Please generate a series of B-roll shots, each 1-2 seconds in length, designed to create dynamic, engaging content that hooks the viewer.
+            
+            For each shot, follow these specific guidelines:
+            Symmetry and Focus: Ensure the composition is symmetrical, with the main subject or action centered to create a balanced and focused visual impact.
+            Visual Elements:
+                Light: Use descriptive lighting. Options include soft diffused light, dramatic shadows, warm golden hour hues, or cool, moody moonlight.
+                Angle: Specify the camera angle. Choose from a low-angle for a sense of power, a high-angle for an overview, a Dutch angle for unease, or a classic eye-level shot.
+                Toning: Describe the color palette. Use warm tones (e.g., amber, gold) to evoke a sense of comfort and energy, or cool tones (e.g., blue, teal) for a feeling of calm or introspection.
+                Light Source: Clearly state the light source, such as the sun (e.g., rising sun, setting sun), moon, or a specific artificial light (e.g., a warm lamp glow, a neon sign).
+                Timing: Set the time of day. Options include dawn for new beginnings, dusk for reflection, or a specific time like midday for high energy.
+                Shot Type: Use a variety of shot types, including a close-up for intimacy, a super long shot for an epic scale, or a tracking shot to follow the action.
+                Saturation: Control the color intensity. Use high saturation for vibrant, energetic scenes or low saturation for a more muted, subtle mood.
+                
+            Content Categories (mix as appropriate):
+                Lifestyle & Work: People interacting with objects, work-related scenes.
+                Technology: Interfaces, gadgets, glowing screens.
+                Nature: Landscapes, weather, natural elements.
+                Creative Processes: Hands on a keyboard, painting, crafting.
+                Abstract: Subtle motion graphics, light flares, or other intangible concepts.
+                Keep each prompt specific, and focused on creating a visually striking, balanced, and captivating cinematic clip.
 
-            Example VISUAL_PROMPTs:
-            Close-up of hands typing on a laptop in a bright café, shallow focus, smooth dolly in.
-            Medium shot of a person explaining data on a tablet to a colleague, warm daylight.
-            Wide shot of rolling hills at sunrise, soft mist, gentle pan.
-            Abstract slow-motion particles drifting across a dark background, subtle glow.
 
         Return ONLY a JSON array:
         [

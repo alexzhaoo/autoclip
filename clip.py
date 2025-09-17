@@ -1121,86 +1121,6 @@ def shift_ass_to_clip_start(ass_path, offset_seconds):
     subs.save(ass_path)
 
 
-def convert_clip_format_for_broll(clip, segments):
-    """Convert your clip format to what the B-roll system expects"""
-    start_sec = clip["start_sec"]
-    end_sec = clip["end_sec"]
-    
-    # Extract segments that overlap with this clip
-    clip_segments = []
-    for seg in segments:
-        if seg["start"] >= start_sec and seg["end"] <= end_sec:
-            # Adjust timing to be relative to clip start
-            clip_segments.append({
-                "start": seg["start"] - start_sec,
-                "end": seg["end"] - start_sec,
-                "text": seg["text"]
-            })
-    
-    return {
-        "hook": clip["hook"],
-        "caption": clip["caption"],
-        "transcript_text": clip["transcript_text"],
-        "segments": clip_segments,
-        "duration": end_sec - start_sec
-    }
-
-
-def generate_broll_for_clip(clip, segments, clip_index):
-    """Generate B-roll for a single clip and return timing information"""
-    if not BROLL_AVAILABLE or not broll_pipeline:
-        return []
-    
-    print(f"\n🎬 Analyzing B-roll opportunities for clip {clip_index}: {clip['hook'][:50]}...")
-    
-    # Convert clip format
-    broll_clip_data = convert_clip_format_for_broll(clip, segments)
-    
-    # Generate B-roll (prefer fast local for development)
-    prefer_quality = os.getenv("PREFER_QUALITY", "false").lower() == "true"
-    
-    try:
-        # Use the analyzer directly to get regions with timing info
-        from production_broll import ProductionBRollAnalyzer
-        analyzer = ProductionBRollAnalyzer()
-        broll_regions = analyzer.analyze_content_for_broll(broll_clip_data["segments"])
-        
-        if not broll_regions:
-            print(f"  ⚠️ No B-roll opportunities found for clip {clip_index}")
-            return []
-        
-        print(f"  ✅ Found {len(broll_regions)} B-roll opportunities")
-        
-        # Generate videos for each region
-        broll_info = []
-        for i, region in enumerate(broll_regions):
-            broll_filename = f"clip_{clip_index}_broll_{i+1}.mp4"
-            broll_path = os.path.join(BROLL_DIR, broll_filename)
-            
-            # Generate the B-roll video
-            generator = broll_pipeline.generator
-            success = generator.generate_broll_video(region.prompt, region.duration, broll_path)
-
-            if success:
-                broll_info.append({
-                    "path": broll_path,
-                    "start_time": region.start_time,
-                    "end_time": region.end_time,
-                    "duration": region.duration,
-                    "prompt": region.prompt
-                })
-                print(f"    📹 Generated B-roll {i+1}: {region.start_time:.1f}s-{region.end_time:.1f}s ({region.duration:.1f}s duration)")
-                print(f"        Prompt: {region.prompt[:60]}...")
-            else:
-                print(f"    ❌ Failed to generate B-roll {i+1} at {region.start_time:.1f}s")
-        
-        return broll_info
-        
-    except Exception as e:
-        print(f"❌ B-roll error for clip {clip_index}: {e}")
-        return []
-
-
 def create_video_with_broll_integration(original_video, broll_info, captions_file=None, output_path=None):
     """Create final video with B-roll segments overlaid on original video, maintaining perfect audio/caption sync"""
     
@@ -1332,7 +1252,6 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
         
         # Build overlay filter chain
         filter_parts = []
-        overlay_labels = []
         
         # Start with the original video as base
         current_label = "[0:v]"
@@ -1343,25 +1262,30 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             broll_label = f"broll{i}"
             overlay_out = f"overlay{i}"
             
-            # Scale B-roll to match video dimensions and prepare for overlay with proper timing
-            # OPTIMIZED: B-roll is now generated in 9:16 portrait format (704x1280 or 720x1280)
+            # FIXED: Properly prepare B-roll video to play during the specified time window
             broll_duration = broll['end_time'] - broll['start_time']
             
-            # B-roll should already be in correct aspect ratio, just scale to match target dimensions
+            # Scale B-roll to match video dimensions and prepare timing
             scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}"
             
+            # CRITICAL FIX: Use setpts to delay the B-roll video to start at the correct time
+            # The B-roll should start playing from time 0 of the B-roll file, but appear at start_time in the main timeline
             filter_parts.append(
-                f"[{broll_input}:v]{scale_filter},fps=30,loop=-1:size=1:start=0,"
-                f"trim=duration={broll_duration:.3f},setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
+                f"[{broll_input}:v]{scale_filter},fps=30,"
+                f"trim=start=0:duration={broll_duration:.3f},"
+                f"setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
             )
             
-            # Create overlay - the B-roll is now properly timed to the main video timeline
-            overlay_filter = f"{current_label}[{broll_label}]overlay[{overlay_out}]"
+            # Create overlay with enable condition to show only during the specified time window
+            # This ensures the B-roll only appears during its designated time period
+            overlay_filter = (
+                f"{current_label}[{broll_label}]overlay=0:0:"
+                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})'[{overlay_out}]"
+            )
             filter_parts.append(overlay_filter)
             current_label = f"[{overlay_out}]"
         
         # Final output from overlay chain is already in current_label
-        # Just use the current_label directly as the composite_video output
         composite_output_label = current_label.strip('[]')
         
         filter_complex = ";".join(filter_parts)
