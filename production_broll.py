@@ -292,8 +292,8 @@ class Wan22VideoGenerator:
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
                 "--prompt", prompt,
-                "--offload_model", "True",  # Keep model in VRAM for RTX 5090
-                "--convert_model_dtype"
+                "--offload_model", False,  # Keep model on GPU for maximum performance
+                # Remove --convert_model_dtype to keep full precision
             ]
             
             # For RTX 5090 (24GB+), keep T5 on GPU for better performance
