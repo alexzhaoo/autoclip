@@ -1535,8 +1535,49 @@ def main(video_path, output_dir=None):
 
         # Generate B-roll for this clip
         broll_files = []
-        if generate_broll and BROLL_AVAILABLE:
-            broll_files = generate_broll_for_clip(clip, segments, i+1)
+        if generate_broll and BROLL_AVAILABLE and broll_pipeline:
+            print(f"🎬 Generating B-roll for clip {i+1}...")
+            
+            # Prepare clip data for the B-roll pipeline
+            clip_data = {
+                "hook": clip.get("hook", ""),
+                "caption": clip.get("caption", ""),
+                "transcript_text": clip.get("transcript_text", ""),
+                "segments": segments,
+                "clip_number": i+1
+            }
+            
+            # Process the clip with the B-roll pipeline
+            success = broll_pipeline.process_clip(clip_data)
+            
+            if success:
+                # Find generated B-roll files
+                import glob
+                import time
+                broll_pattern = "broll_*.mp4"
+                all_broll_files = glob.glob(broll_pattern)
+                
+                # Filter recently created files (last 60 seconds)
+                current_time = time.time()
+                recent_broll_files = [f for f in all_broll_files if os.path.getmtime(f) > current_time - 60]
+                
+                # Convert to format expected by create_video_with_broll_integration
+                for j, broll_file in enumerate(recent_broll_files):
+                    if os.path.exists(broll_file):
+                        # Estimate timing - start at 5s, then every 10s
+                        start_time = 5.0 + (j * 10.0)
+                        duration = 2.0  # 2 second B-roll segments
+                        
+                        broll_files.append({
+                            "path": broll_file,
+                            "start_time": start_time,
+                            "end_time": start_time + duration,
+                            "duration": duration
+                        })
+                
+                print(f"✅ Generated {len(broll_files)} B-roll segments for clip {i+1}")
+            else:
+                print(f"⚠️ B-roll generation failed for clip {i+1}")
 
 
         print("[6] Generating captions...")
