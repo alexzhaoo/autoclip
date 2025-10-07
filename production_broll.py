@@ -339,12 +339,12 @@ class Wan22VideoGenerator:
             print("    ⏳ Starting Wan2.2 generation (model loading may take 30-120 seconds)...")
             start_time = time.time()
             
-            # Run generation with real-time output to see progress and debug file locations
+            # Run generation and capture output for better error reporting
             result = subprocess.run(
                 cmd,
                 cwd=self.wan22_path,
                 env=env,
-                capture_output=False,  # Enable real-time output to monitor progress
+                capture_output=True,  # Capture output for error reporting
                 text=True,
                 timeout=1500  # 25 minute timeout
             )
@@ -414,6 +414,10 @@ class Wan22VideoGenerator:
                     raise RuntimeError(f"No new MP4 files found in expected directories after successful generation")
             else:
                 error_msg = f"Wan2.2 generation failed (exit code {result.returncode})"
+                if result.stderr:
+                    error_msg += f"\nSTDERR: {result.stderr}"
+                if result.stdout:
+                    error_msg += f"\nSTDOUT: {result.stdout}"
                 print(f"    ❌ {error_msg}")
                 raise RuntimeError(error_msg)
                 
