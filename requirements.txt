@@ -39,6 +39,7 @@ pathlib2>=2.3.0  # For older Python compatibility
 dataclasses>=0.6; python_version<"3.7"  # Built-in for Python 3.7+
 decord
 librosa
+peft
 
 # Note: Wan2.2 video generation system is not pip-installable
 # It requires manual setup via git clone from https://github.com/Wan-Video/Wan2.2.git
