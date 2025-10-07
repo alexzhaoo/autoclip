@@ -27,6 +27,7 @@ from nltk.corpus import stopwords
 from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 import argparse
+import traceback
 
 # NLTK data downloads with error handling for remote environments
 def ensure_nltk_data():
@@ -1350,8 +1351,10 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             # B-roll should already be in correct aspect ratio, just scale to match target dimensions
             scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}"
             
+            # FIXED: Remove loop filter that was causing frozen frames
+            # Now the B-roll video will play normally for its duration
             filter_parts.append(
-                f"[{broll_input}:v]{scale_filter},fps=30,loop=-1:size=1:start=0,"
+                f"[{broll_input}:v]{scale_filter},fps=30,"
                 f"trim=duration={broll_duration:.3f},setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
             )
             
@@ -1441,7 +1444,6 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             
     except Exception as e:
         print(f"    ❌ Error in B-roll timeline creation: {e}")
-        import traceback
         traceback.print_exc()
         
         # Clean up any temporary files
@@ -1700,7 +1702,6 @@ def main(video_path, output_dir=None):
                 os.remove(cropped_video)
             
             print(f"❌ Failed to create final video for clip {i+1}: {e}")
-            import traceback
             traceback.print_exc()
             
             # Don't continue with other clips if this one failed
@@ -1748,6 +1749,5 @@ if __name__ == "__main__":
         main(video_path, args.output_dir)
     except Exception as e:
         print(f"❌ Processing failed: {e}")
-        import traceback
         traceback.print_exc()
         exit(1)

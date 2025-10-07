@@ -288,11 +288,11 @@ class Wan22VideoGenerator:
             cmd = [
                 "python", 
                 str(Path(self.wan22_path) / "generate.py"),
-                "--task", config["task"],
+                "--task", config["task"], 
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
                 "--prompt", prompt,
-                "--offload_model", False,  # Keep model on GPU for maximum performance
+                "--offload_model", "False"
                 # Remove --convert_model_dtype to keep full precision
             ]
             
