@@ -118,7 +118,7 @@ class ProductionBRollAnalyzer:
 
 
             VISUAL_PROMPT guidance:
-            Suggest clear, engaging visuals that match the idea in the transcript — scenes, people, objects, environments, or subtle abstract elements.
+            Suggest clear, engaging visuals that match the idea in the transcript — scenes, people, objects, environments, or subtle abstract elements. Always include Symmetrical Composition in the prompt.
             Faces and people are allowed but optional; avoid perfect lip-sync to narration.
             Use a mix of visual moods as appropriate
             Lifestyle & work scenes
@@ -207,7 +207,7 @@ class ProductionBRollAnalyzer:
 class Wan22VideoGenerator:
     """Wan2.2 video generator with multiple model support"""
     
-    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "9:16"):
+    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "16:9"):
         self.wan22_path = wan22_path or os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2")
         self.model_type = model_type
         self.aspect_ratio = aspect_ratio
@@ -217,7 +217,7 @@ class Wan22VideoGenerator:
             size = "704*1280"    # 9:16 portrait for TikTok/Reels
             aspect_desc = "9:16 portrait"
         else:
-            size = "1280*704"    # 16:9 landscape
+            size = "1280*704"    # 16:9 landscape (matches your working command)
             aspect_desc = "16:9 landscape"
         
         self.model_config = {
@@ -284,17 +284,17 @@ class Wan22VideoGenerator:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
             
-            # Build Wan2.2 command with RTX 5090 optimizations
+            # Build Wan2.2 command matching your working configuration
             cmd = [
                 "python", 
                 str(Path(self.wan22_path) / "generate.py"),
                 "--task", config["task"],
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
-                "--prompt", prompt,
-                "--offload_model", "False",  # Keep model in VRAM for RTX 5090
-                "--convert_model_dtype",
-                "--t5_cpu"
+                "--offload_model", "False",
+                "--convert_model_dtype", 
+                "--t5_cpu",
+                "--prompt", prompt
             ]
             
             # For RTX 5090 (24GB+), keep T5 on GPU for better performance
@@ -432,7 +432,7 @@ class Wan22VideoGenerator:
 class ProductionBRollPipeline:
     """Complete production B-roll pipeline with Wan2.2 integration"""
     
-    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "9:16"):
+    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "16:9"):
         self.analyzer = ProductionBRollAnalyzer()
         self.generator = Wan22VideoGenerator(wan22_path, model_type, aspect_ratio)
         self.wan22_path = wan22_path
@@ -525,7 +525,7 @@ class ProductionBRollPipeline:
 PRODUCTION_CONFIG = {
     "wan22_path": os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2"),
     "model_type": os.getenv("WAN22_MODEL", "ti2v-5B"),  # ti2v-5B, t2v-A14B, i2v-A14B
-    "aspect_ratio": os.getenv("BROLL_ASPECT_RATIO", "9:16"),  # 9:16 for TikTok/Reels, 16:9 for landscape
+    "aspect_ratio": os.getenv("BROLL_ASPECT_RATIO", "16:9"),  # Use 16:9 landscape since that's working
 }
 
 def create_production_pipeline() -> ProductionBRollPipeline:
