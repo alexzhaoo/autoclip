@@ -197,22 +197,9 @@ def transcribe(video_path):
         allocated_gb = torch.cuda.memory_allocated() / 1024**3
         print(f"   🎯 GPU Memory: {allocated_gb:.1f}GB / {gpu_memory_gb:.0f}GB allocated")
     
-    # Transcribe with progress tracking and optimized settings
+    # Transcribe with progress tracking
     print("   🔄 Running Whisper transcription...")
-    
-    # Optimize for GPU usage with batch processing
-    transcribe_options = {
-        "word_timestamps": True,
-        "beam_size": 5,  # Default beam size for good accuracy
-        "best_of": 5,    # Number of candidates to consider
-    }
-    
-    # For A100, we can use larger batch sizes
-    if torch.cuda.is_available():
-        transcribe_options["batch_size"] = 16  # Increase batch size for better GPU utilization
-        print(f"   🚀 Using batch size: {transcribe_options['batch_size']} for GPU acceleration")
-    
-    segments, info = model.transcribe(video_path, **transcribe_options)
+    segments, info = model.transcribe(video_path, word_timestamps=True)
     
     print(f"   Language detected: {info.language} (confidence: {info.language_probability:.2%})")
     if duration:
