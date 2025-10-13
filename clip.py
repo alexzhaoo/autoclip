@@ -130,7 +130,17 @@ print(f"🎤 Initializing Whisper model on device: {device.upper()}")
 if device == "cuda":
     print(f"   GPU: {torch.cuda.get_device_name(0)}")
     print(f"   CUDA Memory: {torch.cuda.get_device_properties(0).total_memory // 1024**3}GB")
-model = WhisperModel("small.en", device=device)
+    
+    # Additional GPU info for troubleshooting
+    print(f"   CUDA Version: {torch.version.cuda}")
+    print(f"   PyTorch CUDA Available: {torch.cuda.is_available()}")
+    print(f"   GPU Count: {torch.cuda.device_count()}")
+
+# Use float16 for better GPU utilization on A100
+compute_type = "float16" if device == "cuda" else "int8"
+print(f"   Using compute type: {compute_type}")
+
+model = WhisperModel("small.en", device=device, compute_type=compute_type)
 
 import json
 import re
@@ -167,11 +177,60 @@ def detect_cuda_availability():
         return False
 
 def transcribe(video_path):
-    segments, _ = model.transcribe(video_path, word_timestamps=True)
-
+    print(f"🎤 Starting transcription of: {os.path.basename(video_path)}")
+    
+    # Get video duration for progress estimation
+    try:
+        result = subprocess.run([
+            "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+            "-of", "csv=p=0", video_path
+        ], capture_output=True, text=True)
+        duration = float(result.stdout.strip()) if result.returncode == 0 else None
+        if duration:
+            print(f"   Video duration: {duration/60:.1f} minutes")
+    except Exception:
+        duration = None
+    
+    # Show initial GPU memory if CUDA is available
+    if torch.cuda.is_available():
+        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        allocated_gb = torch.cuda.memory_allocated() / 1024**3
+        print(f"   🎯 GPU Memory: {allocated_gb:.1f}GB / {gpu_memory_gb:.0f}GB allocated")
+    
+    # Transcribe with progress tracking and optimized settings
+    print("   🔄 Running Whisper transcription...")
+    
+    # Optimize for GPU usage with batch processing
+    transcribe_options = {
+        "word_timestamps": True,
+        "beam_size": 5,  # Default beam size for good accuracy
+        "best_of": 5,    # Number of candidates to consider
+    }
+    
+    # For A100, we can use larger batch sizes
+    if torch.cuda.is_available():
+        transcribe_options["batch_size"] = 16  # Increase batch size for better GPU utilization
+        print(f"   🚀 Using batch size: {transcribe_options['batch_size']} for GPU acceleration")
+    
+    segments, info = model.transcribe(video_path, **transcribe_options)
+    
+    print(f"   Language detected: {info.language} (confidence: {info.language_probability:.2%})")
+    if duration:
+        print(f"   Estimated processing time: {duration/60*0.1:.1f} minutes")
+    
     transcript = ""
     segments_list = []
-    for segment in segments:
+    
+    # Convert generator to list with progress bar
+    print("   📝 Processing transcript segments...")
+    segments = list(tqdm(segments, desc="   Processing segments", unit="seg"))
+    
+    # Show GPU memory after transcription if CUDA is available
+    if torch.cuda.is_available():
+        allocated_gb = torch.cuda.memory_allocated() / 1024**3
+        print(f"   📊 GPU Memory after transcription: {allocated_gb:.1f}GB allocated")
+    
+    for segment in tqdm(segments, desc="   Building transcript", unit="seg"):
         segment_dict = {
             "start": segment.start,
             "end": segment.end,
