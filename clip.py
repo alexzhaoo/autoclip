@@ -123,7 +123,14 @@ if BROLL_AVAILABLE:
     except Exception as e:
         print(f"⚠️ B-roll pipeline initialization failed: {e}")
         BROLL_AVAILABLE = False
-model = WhisperModel("small.en", device="cuda" if torch.cuda.is_available() else "cpu")
+
+# Initialize Whisper model with device detection
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"🎤 Initializing Whisper model on device: {device.upper()}")
+if device == "cuda":
+    print(f"   GPU: {torch.cuda.get_device_name(0)}")
+    print(f"   CUDA Memory: {torch.cuda.get_device_properties(0).total_memory // 1024**3}GB")
+model = WhisperModel("small.en", device=device)
 
 import json
 import re
