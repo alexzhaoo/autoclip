@@ -1,14 +1,29 @@
+# Core Torch / flash-attn (pinned for compatibility)
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torchaudio==2.5.1+cu121
+flash-attn==2.6.2
+
 # Core dependencies
+opencv-python>=4.9.0.80
+diffusers>=0.31.0
+transformers>=4.49.0,<=4.51.3
+tokenizers>=0.20.3
+accelerate>=1.1.1
+tqdm
+imageio[ffmpeg]
+easydict
+ftfy
+dashscope
+imageio-ffmpeg
+numpy>=1.23.5,<2
 openai>=1.0.0
-torch>=2.0.0
 python-dotenv>=1.0.0
 yt-dlp>=2023.1.0
-tqdm>=4.64.0
 
 # Video processing
 opencv-python>=4.8.0
 mediapipe>=0.10.0
-numpy>=1.24.0
 moviepy>=1.0.3
 pysubs2>=1.6.0
 pysrt>=1.1.2
@@ -31,16 +46,12 @@ diffusers[torch]>=0.18.0
 # Web requests
 requests>=2.31.0
 
-# Vast.ai SDK for cloud computing
+# Vast.ai SDK
 vastai-sdk>=0.1.0
 
 # Additional utilities
-pathlib2>=2.3.0  # For older Python compatibility
-dataclasses>=0.6; python_version<"3.7"  # Built-in for Python 3.7+
+pathlib2>=2.3.0
+dataclasses>=0.6; python_version<"3.7"
 decord
 librosa
 peft
-
-# Note: Wan2.2 video generation system is not pip-installable
-# It requires manual setup via git clone from https://github.com/Wan-Video/Wan2.2.git
-# See run_on_vast.py for the complete installation process
