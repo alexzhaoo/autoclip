@@ -291,7 +291,7 @@ class Wan22VideoGenerator:
                 "--task", config["task"],
                 "--size", config["size"],
                 "--ckpt_dir", str(model_dir),
-                "--offload_model", "False",
+                "--offload_model", "True",
                 "--convert_model_dtype", 
                 "--t5_cpu",
                 "--prompt", prompt
