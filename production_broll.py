@@ -130,10 +130,10 @@ class ProductionBRollAnalyzer:
             Keep prompts short but specific for 1–2 s cinematic clips.
 
             Example VISUAL_PROMPTs:
-            Close-up of hands typing on a laptop in a bright café, shallow focus, smooth dolly in.
-            Medium shot of a person explaining data on a tablet to a colleague, warm daylight.
-            Wide shot of rolling hills at sunrise, soft mist, gentle pan.
-            Abstract slow-motion particles drifting across a dark background, subtle glow.
+            Wide aerial shot of a city at dusk, glowing windows, soft haze.
+            Macro shot of ink spreading through water, vibrant color.
+            Tracking shot of a scientist walking through a bright lab, reflections on glass.
+            Slow pan across ocean waves under golden light.
 
         Return ONLY a JSON array:
         [
@@ -217,7 +217,7 @@ class Wan22VideoGenerator:
             size = "704*1280"    # 9:16 portrait for TikTok/Reels
             aspect_desc = "9:16 portrait"
         else:
-            size = "1280*704"    # 16:9 landscape (matches your working command)
+            size = "704*1280"    # 16:9 landscape (matches your working command)
             aspect_desc = "16:9 landscape"
         
         self.model_config = {

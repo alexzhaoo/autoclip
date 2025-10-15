@@ -1386,7 +1386,6 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
         
         # Build overlay filter chain
         filter_parts = []
-        overlay_labels = []
         
         # Start with the original video as base
         current_label = "[0:v]"
@@ -1397,27 +1396,30 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             broll_label = f"broll{i}"
             overlay_out = f"overlay{i}"
             
-            # Scale B-roll to match video dimensions and prepare for overlay with proper timing
-            # OPTIMIZED: B-roll is now generated in 9:16 portrait format (704x1280 or 720x1280)
+            # FIXED: Properly prepare B-roll video to play during the specified time window
             broll_duration = broll['end_time'] - broll['start_time']
             
-            # B-roll should already be in correct aspect ratio, just scale to match target dimensions
+            # Scale B-roll to match video dimensions and prepare timing
             scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}"
             
-            # FIXED: Remove loop filter that was causing frozen frames
-            # Now the B-roll video will play normally for its duration
+            # CRITICAL FIX: Use setpts to delay the B-roll video to start at the correct time
+            # The B-roll should start playing from time 0 of the B-roll file, but appear at start_time in the main timeline
             filter_parts.append(
                 f"[{broll_input}:v]{scale_filter},fps=30,"
-                f"trim=duration={broll_duration:.3f},setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
+                f"trim=start=0:duration={broll_duration:.3f},"
+                f"setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
             )
             
-            # Create overlay - the B-roll is now properly timed to the main video timeline
-            overlay_filter = f"{current_label}[{broll_label}]overlay[{overlay_out}]"
+            # Create overlay with enable condition to show only during the specified time window
+            # This ensures the B-roll only appears during its designated time period
+            overlay_filter = (
+                f"{current_label}[{broll_label}]overlay=0:0:"
+                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})'[{overlay_out}]"
+            )
             filter_parts.append(overlay_filter)
             current_label = f"[{overlay_out}]"
         
         # Final output from overlay chain is already in current_label
-        # Just use the current_label directly as the composite_video output
         composite_output_label = current_label.strip('[]')
         
         filter_complex = ";".join(filter_parts)
@@ -1497,6 +1499,7 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             
     except Exception as e:
         print(f"    ❌ Error in B-roll timeline creation: {e}")
+        import traceback
         traceback.print_exc()
         
         # Clean up any temporary files
