@@ -79,11 +79,11 @@ class ProductionBRollAnalyzer:
         sorted_regions = sorted(regions, key=lambda r: r.start_time)
         
         filtered = []
-        last_broll_time = -10.0  # Allow B-roll at start
+        last_broll_time = -3.0  # Allow B-roll at start with 3s spacing
         
         for region in sorted_regions:
-            # Check 10-second spacing constraint
-            if region.start_time - last_broll_time >= 10.0:
+            # Check 3-second spacing constraint
+            if region.start_time - last_broll_time >= 3.0:
                 # Constrain duration to 1-2 seconds
                 max_duration = min(2.0, region.duration)
                 constrained_region = BRollRegion(
@@ -107,7 +107,7 @@ class ProductionBRollAnalyzer:
         
         # Enhanced prompt optimized for Wan2.2 generation
         prompt = f"""
-            Analyze this video transcript and identify 2–3 short B-roll opportunities (1–2 s) that enhance viewer engagement.
+            Analyze this video transcript and identify 4-5 short B-roll opportunities (1–2 s) that enhance viewer engagement.
             TRANSCRIPT: {transcript_text}
             For each, provide:
 
@@ -117,23 +117,24 @@ class ProductionBRollAnalyzer:
             reason - why this clip fits
 
 
-            VISUAL_PROMPT guidance:
-            Suggest clear, engaging visuals that match the idea in the transcript — scenes, people, objects, environments, or subtle abstract elements. Always include Symmetrical Composition in the prompt.
-            Faces and people are allowed but optional; avoid perfect lip-sync to narration.
-            Use a mix of visual moods as appropriate
-            Lifestyle & work scenes
+            VISUAL PROMPT Guidance: Suggest clear, engaging visuals that directly reflect the transcript’s ideas, themes, or emotions — scenes, objects, environments, or subtle abstract elements. Ensure Symmetrical Composition in every prompt.
+            Diversify visuals: Avoid repetitive use of close-up hand shots unless explicitly relevant to the transcript (e.g., crafting or manual work). Prioritize varied perspectives like wide shots, aerial views, or dynamic angles.
+            Faces and people are optional; avoid perfect lip-sync to narration.
+            Use a mix of visual moods as appropriate:Lifestyle & work scenes
             Technology & interfaces
             Nature & outdoors
-            Creative processes / crafts
-            Light abstract or motion graphics (only if concept is very intangible)
-            Describe camera angle (close-up, wide, tracking), lighting, color, and textures.
-            Keep prompts short but specific for 1–2 s cinematic clips.
+            Creative processes / crafts (only if transcript explicitly mentions creation or artistry)
+            Light abstract or motion graphics (only for intangible concepts)
 
-            Example VISUAL_PROMPTs:
-            Wide aerial shot of a city at dusk, glowing windows, soft haze.
-            Macro shot of ink spreading through water, vibrant color.
-            Tracking shot of a scientist walking through a bright lab, reflections on glass.
-            Slow pan across ocean waves under golden light.
+            Specify camera angle (e.g., close-up, wide, tracking), lighting, color, and textures.
+            Keep prompts concise but specific for 1–2 s cinematic clips.
+            Avoid: Overused visuals like generic close-ups of hands unless the transcript explicitly describes manual actions.
+
+            Example VISUAL_PROMPTs:Wide aerial shot of a city at dusk, glowing windows, soft haze, symmetrical skyline.
+            Macro shot of ink spreading through water, vibrant colors, symmetrical flow.
+            Tracking shot of a scientist walking through a bright lab, reflections on glass, balanced composition.
+            Slow pan across ocean waves under golden light, symmetrical horizon.
+
 
         Return ONLY a JSON array:
         [

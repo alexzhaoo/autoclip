@@ -1325,37 +1325,43 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             raise FileNotFoundError(f"B-roll files not found: {missing_broll}")
         
         # Filter and constrain B-roll segments
-        # CONSTRAINT: B-roll every ~10 seconds, 1-2 seconds duration each
+        # CONSTRAINT: B-roll every ~3 seconds, 1-2 seconds duration each
         # IMPORTANT: No B-roll in first 5 seconds to avoid sync issues
         valid_broll = []
-        last_broll_time = -10.0  # This allows spacing calculation to work
+        last_broll_time = -3.0  # This allows spacing calculation to work
         
         for broll in sorted(broll_info, key=lambda x: x["start_time"]):
-            # CRITICAL FIX: Don't allow B-roll in first 5 seconds of clip
-            if broll["start_time"] < 5.0:
-                print(f"    ⚠️ Skipping B-roll at {broll['start_time']:.1f}s (too early, minimum 5s)")
-                continue
+            # Adjust B-roll if it starts too early (before 5 seconds)
+            adjusted_start = broll["start_time"]
+            adjusted_end = broll.get("end_time", broll["start_time"] + broll.get("duration", 2.0))
+            
+            if adjusted_start < 5.0:
+                # Shift the B-roll to start at 5 seconds, preserving duration
+                time_shift = 5.0 - adjusted_start
+                adjusted_start = 5.0
+                adjusted_end = min(adjusted_end + time_shift, total_duration)
+                print(f"    🔧 Adjusted B-roll from {broll['start_time']:.1f}s to {adjusted_start:.1f}s (shifted by {time_shift:.1f}s)")
                 
-            # Check 10-second spacing constraint
-            if broll["start_time"] - last_broll_time >= 10.0:
+            # Check 3-second spacing constraint
+            if adjusted_start - last_broll_time >= 3.0:
                 # Constrain duration to 1-2 seconds max
-                max_duration = min(2.0, broll.get("duration", 2.0))
+                max_duration = min(2.0, adjusted_end - adjusted_start)
                 constrained_end = min(
-                    broll["start_time"] + max_duration,
-                    broll.get("end_time", broll["start_time"] + max_duration),
+                    adjusted_start + max_duration,
+                    adjusted_end,
                     total_duration
                 )
                 
                 valid_broll.append({
                     "path": broll["path"],
-                    "start_time": broll["start_time"],
+                    "start_time": adjusted_start,
                     "end_time": constrained_end,
-                    "duration": constrained_end - broll["start_time"]
+                    "duration": constrained_end - adjusted_start
                 })
-                last_broll_time = broll["start_time"]
-                print(f"    ✅ B-roll scheduled: {broll['start_time']:.1f}s-{constrained_end:.1f}s")
+                last_broll_time = adjusted_start
+                print(f"    ✅ B-roll scheduled: {adjusted_start:.1f}s-{constrained_end:.1f}s")
             else:
-                print(f"    ⚠️ Skipping B-roll at {broll['start_time']:.1f}s (too close to previous at {last_broll_time:.1f}s)")
+                print(f"    ⚠️ Skipping B-roll at {adjusted_start:.1f}s (too close to previous at {last_broll_time:.1f}s)")
         
         print(f"    🎬 Using {len(valid_broll)} B-roll segments (filtered from {len(broll_info)} candidates)")
         
