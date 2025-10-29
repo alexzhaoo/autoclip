@@ -294,7 +294,7 @@ class Wan22VideoGenerator:
                 "--ckpt_dir", str(model_dir),
                 # "--offload_model", "True",
                 "--convert_model_dtype", 
-                "--t5_cpu",
+                # "--t5_cpu",
                 "--prompt", prompt
             ]
             
