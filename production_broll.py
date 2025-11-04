@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-Production B-roll Generator v2.0
-Integrates with Wan2.2 video generation models for high-quality video generation
-Includes fast local fallback for development and testing
-"""
+
 
 import os
 import json
@@ -107,33 +103,36 @@ class ProductionBRollAnalyzer:
         
         # Enhanced prompt optimized for Wan2.2 generation
         prompt = f"""
-            Analyze this video transcript and identify 4-5 short B-roll opportunities (1–2 s) that enhance viewer engagement.
+            Analyze this video transcript and identify 1-2 short B-roll opportunities (3-4 seconds) that enhance viewer engagement.
             TRANSCRIPT: {transcript_text}
             For each, provide:
 
-            START_TIME – when B-roll starts (s from chunk start)
+            START_TIME – when B-roll starts (seconds from chunk start)
             END_TIME – when it ends
-            VISUAL_PROMPT – vivid, cinematic description for Wan2.2 text-to-video
+            VISUAL_PROMPT – vivid, cinematic (add the words "Symmetrical Composition" at the end of each prompt) 
             reason - why this clip fits
 
 
-            VISUAL PROMPT Guidance: Suggest clear, engaging visuals that directly reflect the transcript’s ideas, themes, or emotions — scenes, objects, environments, or subtle abstract elements. Ensure Symmetrical Composition in every prompt.
-            Diversify visuals: Avoid repetitive use of close-up hand shots unless explicitly relevant to the transcript (e.g., crafting or manual work). Prioritize varied perspectives like wide shots, aerial views, or dynamic angles.
-            Faces and people are optional; avoid perfect lip-sync to narration.
-            Use a mix of visual moods as appropriate:Lifestyle & work scenes
-            Technology & interfaces
-            Nature & outdoors
-            Creative processes / crafts (only if transcript explicitly mentions creation or artistry)
-            Light abstract or motion graphics (only for intangible concepts)
+            Suggest clear, engaging visuals with DYNAMIC MOVEMENT that reflect the transcript's ideas, themes, or emotions.
+            ALWAYS specify motion: camera movement (pan, tilt, zoom, dolly, tracking) AND/OR subject movement (flowing, rotating, walking, falling, rising, transforming).
+            Ensure Symmetrical Composition where natural.
+
+            Use diverse visual categories WITH MOTION:
+            - Lifestyle & work: people walking, gesturing, objects being manipulated
+            - Technology: screens animating, data flowing, lights pulsing, interfaces transitioning
+            - Nature: wind blowing, water flowing, clouds drifting, leaves rustling, birds flying
+            - Creative processes: materials transforming, liquids mixing, brush strokes appearing
+            - Abstract: particles flowing, shapes morphing, waves rippling, energy radiating
+
 
             Specify camera angle (e.g., close-up, wide, tracking), lighting, color, and textures.
-            Keep prompts concise but specific for 1–2 s cinematic clips.
             Avoid: Overused visuals like generic close-ups of hands unless the transcript explicitly describes manual actions.
 
-            Example VISUAL_PROMPTs:Wide aerial shot of a city at dusk, glowing windows, soft haze, symmetrical skyline.
-            Macro shot of ink spreading through water, vibrant colors, symmetrical flow.
-            Tracking shot of a scientist walking through a bright lab, reflections on glass, balanced composition.
-            Slow pan across ocean waves under golden light, symmetrical horizon.
+            Example VISUAL_PROMPTs (NOTE THE MOTION VERBS):
+            Smooth aerial dolly shot gliding over a city at dusk, camera moving forward steadily, windows glowing, soft haze drifting, birds flying across symmetrical skyline.
+            Macro shot of vibrant ink droplets spreading and swirling dynamically through clear water, colors bleeding outward, symmetrical flow patterns forming and evolving.
+            Fluid tracking shot following a scientist walking through a bright lab, camera moving smoothly alongside, reflections shifting on glass panels, balanced composition.
+            Slow sweeping pan across rolling ocean waves under golden light, water continuously rippling, foam flowing forward, camera tilting gently, symmetrical horizon line.
 
 
         Return ONLY a JSON array:
