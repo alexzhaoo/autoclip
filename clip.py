@@ -370,16 +370,6 @@ def extract_clips(transcript, var ,max_clips=2):
         the clip must begin with the earliest point where cortisol or its symptoms are 
         first mentioned — not at the emotional peak.
 
-        Example clips:
-         GOOD CLIP:
-        "Did you know there's a really fascinating experiment done on weight lifters?
-          They lifted no weights for two weeks. 
-          They just sat there and they visualized themselves lifting weights. They had a 13% increase in muscle mass. 
-        People should realize how much potential they have in their brains."
-
-         BAD CLIP:
-        "...and that’s why it all comes down to dopamine. Because without it, you’re just not going to feel motivated to do anything."
-        
          Prioritize clips that:
         - Contain a surprising fact, bold opinion, or viral insight
         - Feel emotionally powerful, inspiring, or funny
