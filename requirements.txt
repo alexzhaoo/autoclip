@@ -7,7 +7,9 @@
 torch==2.8.0+cu128
 torchvision==0.23.0+cu128
 torchaudio==2.8.0+cu128
-flash-attn==2.8.3
+
+# FlashAttention (use PEP517 to avoid deprecation warnings)
+flash-attn==2.8.3 --no-build-isolation --use-pep517
 
 # Core dependencies
 opencv-python>=4.9.0.80
