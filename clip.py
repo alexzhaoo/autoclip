@@ -360,7 +360,7 @@ def extract_clips(transcript, var ,max_clips=2):
     # Truncate transcript at the last sentence before 5000 chars
     prompt = f"""
 
-       From the transcript below, extract {max_clips} short clips between 30-60 seconds that are likely to perform well on TikTok or Instagram Reels.
+       From the transcript below, extract {max_clips} short clips between 30-40 seconds that are likely to perform well on TikTok or Instagram Reels.
  
         Each clip must be completely self-contained:
         - Start at the **beginning of a complete sentence or clear idea**

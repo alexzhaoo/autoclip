@@ -98,17 +98,30 @@ class ProductionBRollAnalyzer:
     
     def _analyze_chunk_with_gpt(self, chunk: List[Dict]) -> List[BRollRegion]:
         """Analyze a chunk of segments with GPT-4"""
-        # Create transcript text from chunk
-        transcript_text = " ".join([seg.get("text", "") for seg in chunk])
+        # Create transcript with timing information
+        chunk_start = chunk[0].get("start", 0) if chunk else 0
+        chunk_end = chunk[-1].get("end", 0) if chunk else 0
+        
+        # Build transcript with timestamps for better alignment
+        transcript_lines = []
+        for seg in chunk:
+            seg_start = seg.get("start", 0)
+            seg_text = seg.get("text", "")
+            transcript_lines.append(f"[{seg_start:.1f}s] {seg_text}")
+        
+        transcript_with_timing = "\n".join(transcript_lines)
         
         # Enhanced prompt optimized for Wan2.2 generation
         prompt = f"""
             Analyze this video transcript and identify 1-2 short B-roll opportunities (3-4 seconds) that enhance viewer engagement.
-            TRANSCRIPT: {transcript_text}
-            For each, provide:
+            
+            TRANSCRIPT (with timestamps in seconds from clip/video start):
+            {transcript_with_timing}
+            
+            For each B-roll opportunity, provide:
 
-            START_TIME – when B-roll starts (seconds from chunk start)
-            END_TIME – when it ends
+            START_TIME – Exact timestamp when B-roll starts (in seconds, match the timestamps shown above, must be between {chunk_start:.1f} and {chunk_end:.1f})
+            END_TIME – Exact timestamp when it ends (in seconds, use the same timing scale as above)
             VISUAL_PROMPT – vivid, cinematic (add the words "Symmetrical Composition" at the end of each prompt) 
             reason - why this clip fits
 
@@ -177,20 +190,24 @@ class ProductionBRollAnalyzer:
             broll_data = json.loads(json_match.group())
             regions = []
             
-            # Calculate chunk start time
-            chunk_start = chunk[0].get("start", 0) if chunk else 0
-            
             for item in broll_data:
                 try:
+                    # GPT provides timestamps matching the segment timings shown in transcript
+                    # These could be relative to clip start (0-60s) or absolute in video (300-360s)
+                    # depending on how segments were prepared
+                    start_time = item["start_time"]
+                    end_time = item["end_time"]
+                    
                     region = BRollRegion(
-                        start_time=chunk_start + item["start_time"],
-                        end_time=chunk_start + item["end_time"],
-                        duration=item["end_time"] - item["start_time"],
+                        start_time=start_time,
+                        end_time=end_time,
+                        duration=end_time - start_time,
                         reason=item["reason"],
                         confidence=0.9,  # High confidence for GPT suggestions
                         prompt=item["visual_prompt"]
                     )
                     regions.append(region)
+                    print(f"    📍 B-roll at {start_time:.1f}s-{end_time:.1f}s: {item['reason'][:50]}")
                 except KeyError as e:
                     print(f"    ⚠️ Missing field in GPT response: {e}")
                     continue
