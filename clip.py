@@ -1175,10 +1175,21 @@ def convert_clip_format_for_broll(clip, segments):
     for seg in segments:
         if seg["start"] >= start_sec and seg["end"] <= end_sec:
             # Adjust timing to be relative to clip start
+            # Include word-level timestamps for precise b-roll placement
+            adjusted_words = []
+            if "words" in seg and seg["words"]:
+                for word in seg["words"]:
+                    adjusted_words.append({
+                        "start": word["start"] - start_sec,
+                        "end": word["end"] - start_sec,
+                        "word": word["word"]
+                    })
+            
             clip_segments.append({
                 "start": seg["start"] - start_sec,
                 "end": seg["end"] - start_sec,
-                "text": seg["text"]
+                "text": seg["text"],
+                "words": adjusted_words
             })
     
     return {
@@ -1233,8 +1244,18 @@ def generate_broll_for_clip(clip, segments, clip_index):
                     "duration": region.duration,
                     "prompt": region.prompt
                 })
-                print(f"    📹 Generated B-roll {i+1}: {region.start_time:.1f}s-{region.end_time:.1f}s ({region.duration:.1f}s duration)")
-                print(f"        Prompt: {region.prompt[:60]}...")
+                print(f"    📹 Generated B-roll {i+1}:")
+                print(f"        ⏱️  Timing: {region.start_time:.2f}s → {region.end_time:.2f}s (duration: {region.duration:.2f}s)")
+                print(f"        📂 File: {broll_path}")
+                print(f"        🎨 Prompt: {region.prompt[:80]}...")
+                
+                # Show which transcript segment this aligns with
+                matching_segments = [s for s in broll_clip_data["segments"] 
+                                   if s["start"] <= region.start_time <= s["end"] or 
+                                      s["start"] <= region.end_time <= s["end"]]
+                if matching_segments:
+                    segment_text = " ".join([s["text"] for s in matching_segments])
+                    print(f"        💬 Context: \"{segment_text[:60]}...\"")
             else:
                 print(f"    ❌ Failed to generate B-roll {i+1} at {region.start_time:.1f}s")
         
@@ -1290,6 +1311,22 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             video_width, video_height = int(dimensions[0]), int(dimensions[1])
         except (ValueError, IndexError):
             raise RuntimeError(f"Invalid dimension format: {result.stdout.strip()}")
+        
+        # Get video frame rate
+        result = subprocess.run([
+            "ffprobe", "-v", "quiet", "-show_entries", "stream=r_frame_rate",
+            "-of", "csv=p=0", original_video
+        ], capture_output=True, text=True)
+        
+        fps = 30  # Default fallback
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                # Parse frame rate (format: "30/1" or "30000/1001")
+                fps_parts = result.stdout.strip().split('/')
+                if len(fps_parts) == 2:
+                    fps = int(float(fps_parts[0]) / float(fps_parts[1]))
+            except (ValueError, ZeroDivisionError):
+                pass  # Use default
         
         is_portrait = video_height > video_width
         
@@ -1375,10 +1412,16 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
         
         # NEW APPROACH: Overlay B-roll on top of original video (maintains sync)
         print(f"🎭 B-roll overlay approach: {len(valid_broll)} overlays (maintains perfect sync)")
+        print(f"    📹 Original video: {video_width}x{video_height}, {fps} fps")
         
-        # Debug: Print the overlay schedule
+        # Debug: Print the overlay schedule with detailed timing info
         for i, broll in enumerate(valid_broll):
-            print(f"  Overlay {i+1}: B-roll at {broll['start_time']:.1f}s-{broll['end_time']:.1f}s ({broll['duration']:.1f}s)")
+            broll_duration = broll['end_time'] - broll['start_time']
+            print(f"  📍 Overlay {i+1}:")
+            print(f"      Start: {broll['start_time']:.2f}s, End: {broll['end_time']:.2f}s, Duration: {broll_duration:.2f}s")
+            print(f"      File: {os.path.basename(broll['path'])}")
+            if 'prompt' in broll:
+                print(f"      Prompt: {broll['prompt'][:60]}...")
         
         # Build overlay filter chain
         filter_parts = []
@@ -1392,28 +1435,31 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             broll_label = f"broll{i}"
             overlay_out = f"overlay{i}"
             
-            # FIXED: Properly prepare B-roll video to play during the specified time window
+            # Calculate B-roll duration from the timing info
             broll_duration = broll['end_time'] - broll['start_time']
             
-            # Scale B-roll to match video dimensions and prepare timing
+            # Scale B-roll to match video dimensions
             scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}"
             
-            # CRITICAL FIX: Use setpts to delay the B-roll video to start at the correct time
-            # The B-roll should start playing from time 0 of the B-roll file, but appear at start_time in the main timeline
+            # Prepare B-roll: scale, set fps, loop to ensure enough frames
+            # setpts=PTS-STARTPTS ensures b-roll starts from timestamp 0
+            # loop=-1 ensures we have enough content to fill the duration window
             filter_parts.append(
                 f"[{broll_input}:v]{scale_filter},fps=30,"
-                f"trim=start=0:duration={broll_duration:.3f},"
-                f"setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
+                f"setpts=PTS-STARTPTS,loop=-1:size=1:start=0[{broll_label}]"
             )
             
-            # Create overlay with enable condition to show only during the specified time window
-            # This ensures the B-roll only appears during its designated time period
+            # Overlay with precise enable condition - only show during the exact time window
+            # The 'enable' expression is evaluated against the main video timeline (t)
             overlay_filter = (
                 f"{current_label}[{broll_label}]overlay=0:0:"
-                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})'[{overlay_out}]"
+                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})':shortest=0[{overlay_out}]"
             )
             filter_parts.append(overlay_filter)
             current_label = f"[{overlay_out}]"
+            
+            # Debug output
+            print(f"    🎬 Overlay {i+1}: B-roll will appear at {broll['start_time']:.1f}s-{broll['end_time']:.1f}s (duration: {broll_duration:.1f}s)")
         
         # Final output from overlay chain is already in current_label
         composite_output_label = current_label.strip('[]')

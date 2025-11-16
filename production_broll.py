@@ -66,8 +66,13 @@ class ProductionBRollAnalyzer:
         print(f"  ✅ Found {len(all_regions)} candidates, filtered to {len(filtered_regions)} optimal placements")
         return filtered_regions
     
-    def _apply_timing_constraints(self, regions: List[BRollRegion]) -> List[BRollRegion]:
-        """Apply timing constraints: 1 B-roll every ~10 seconds, max 2 seconds duration each"""
+    def _apply_timing_constraints(self, regions: List[BRollRegion], min_spacing: float = 2.0) -> List[BRollRegion]:
+        """Apply timing constraints: maintain spacing between B-rolls, limit duration
+        
+        Args:
+            regions: List of B-roll regions to filter
+            min_spacing: Minimum seconds between B-roll placements (default 2.0, was 3.0)
+        """
         if not regions:
             return regions
         
@@ -75,13 +80,13 @@ class ProductionBRollAnalyzer:
         sorted_regions = sorted(regions, key=lambda r: r.start_time)
         
         filtered = []
-        last_broll_time = -3.0  # Allow B-roll at start with 3s spacing
+        last_broll_time = -min_spacing  # Allow B-roll at start
         
         for region in sorted_regions:
-            # Check 3-second spacing constraint
-            if region.start_time - last_broll_time >= 3.0:
-                # Constrain duration to 1-2 seconds
-                max_duration = min(2.0, region.duration)
+            # Check spacing constraint (reduced from 3s to 2s for more placements)
+            if region.start_time - last_broll_time >= min_spacing:
+                # Constrain duration to 1-3 seconds (increased max from 2s to 3s)
+                max_duration = min(3.0, region.duration)
                 constrained_region = BRollRegion(
                     start_time=region.start_time,
                     end_time=min(region.start_time + max_duration, region.end_time),
@@ -93,6 +98,10 @@ class ProductionBRollAnalyzer:
                 
                 filtered.append(constrained_region)
                 last_broll_time = region.start_time
+                print(f"    ✅ Kept B-roll at {region.start_time:.1f}s (spacing: {region.start_time - (last_broll_time if filtered else -min_spacing):.1f}s)")
+            else:
+                spacing = region.start_time - last_broll_time
+                print(f"    ⏭️  Filtered out B-roll at {region.start_time:.1f}s (spacing {spacing:.1f}s < {min_spacing:.1f}s)")
         
         return filtered
     
@@ -102,28 +111,47 @@ class ProductionBRollAnalyzer:
         chunk_start = chunk[0].get("start", 0) if chunk else 0
         chunk_end = chunk[-1].get("end", 0) if chunk else 0
         
-        # Build transcript with timestamps for better alignment
+        # Build transcript with word-level timestamps for precise alignment
         transcript_lines = []
         for seg in chunk:
-            seg_start = seg.get("start", 0)
-            seg_text = seg.get("text", "")
-            transcript_lines.append(f"[{seg_start:.1f}s] {seg_text}")
+            # Use word-level timestamps if available for better precision
+            if "words" in seg and seg["words"] and len(seg["words"]) > 0:
+                # Format: show first word timestamp, then words, then last word timestamp
+                # This is cleaner than timestamp on every word
+                first_word_time = seg["words"][0].get("start", 0)
+                last_word_time = seg["words"][-1].get("end", 0)
+                words_text = " ".join([w.get("word", "") for w in seg["words"]])
+                transcript_lines.append(f"[{first_word_time:.2f}s - {last_word_time:.2f}s] {words_text}")
+            else:
+                # Fallback to segment-level if words not available
+                seg_start = seg.get("start", 0)
+                seg_end = seg.get("end", 0)
+                seg_text = seg.get("text", "")
+                transcript_lines.append(f"[{seg_start:.2f}s - {seg_end:.2f}s] {seg_text}")
         
         transcript_with_timing = "\n".join(transcript_lines)
         
-        # Enhanced prompt optimized for Wan2.2 generation
+        # Enhanced prompt optimized for Wan2.2 generation with precise timing alignment
         prompt = f"""
-            Analyze this video transcript and identify 1-2 short B-roll opportunities (3-4 seconds) that enhance viewer engagement.
+            Analyze this video transcript and identify 1-2 short B-roll opportunities (2-4 seconds) that enhance viewer engagement.
             
-            TRANSCRIPT (with timestamps in seconds from clip/video start):
+            TRANSCRIPT (with precise timestamps showing phrase boundaries in seconds):
             {transcript_with_timing}
+            
+            CRITICAL TIMING RULES:
+            1. START_TIME must be within the time ranges shown above (e.g., if you see [2.54s - 5.32s], choose any time between 2.54 and 5.32)
+            2. END_TIME must be 2-4 seconds after START_TIME and fall within or end at a phrase boundary
+            3. B-roll duration should be 2-4 seconds
+            4. Choose the EXACT moment when the relevant word/phrase begins speaking
+            5. Times must be between {chunk_start:.1f} and {chunk_end:.1f}
+            6. Choose moments where visuals would enhance understanding without disrupting the narrative flow
             
             For each B-roll opportunity, provide:
 
-            START_TIME – Exact timestamp when B-roll starts (in seconds, match the timestamps shown above, must be between {chunk_start:.1f} and {chunk_end:.1f})
-            END_TIME – Exact timestamp when it ends (in seconds, use the same timing scale as above)
+            START_TIME – MUST be an exact timestamp from the transcript above (in seconds)
+            END_TIME – MUST be a timestamp from the transcript above (in seconds)
             VISUAL_PROMPT – vivid, cinematic (add the words "Symmetrical Composition" at the end of each prompt) 
-            reason - why this clip fits
+            reason - why this clip fits and which transcript line it illustrates
 
 
             Suggest clear, engaging visuals with DYNAMIC MOVEMENT that reflect the transcript's ideas, themes, or emotions.
@@ -178,7 +206,7 @@ class ProductionBRollAnalyzer:
             return []
     
     def _parse_gpt_response(self, response: str, chunk: List[Dict]) -> List[BRollRegion]:
-        """Parse GPT response and create BRollRegion objects"""
+        """Parse GPT response and validate timestamps align with segment boundaries"""
         try:
             # Extract JSON from response
             import re
@@ -190,13 +218,53 @@ class ProductionBRollAnalyzer:
             broll_data = json.loads(json_match.group())
             regions = []
             
+            # Build list of valid word and segment boundaries for validation
+            valid_times = set()
+            for seg in chunk:
+                valid_times.add(seg.get("start", 0))
+                valid_times.add(seg.get("end", 0))
+                # Add word-level timestamps
+                if "words" in seg and seg["words"] and len(seg["words"]) > 0:
+                    for word in seg["words"]:
+                        valid_times.add(word.get("start", 0))
+                        valid_times.add(word.get("end", 0))
+            valid_times = sorted(list(valid_times))
+            
+            # Ensure we have at least chunk boundaries
+            if not valid_times:
+                valid_times = [chunk_start, chunk_end]
+            
             for item in broll_data:
                 try:
-                    # GPT provides timestamps matching the segment timings shown in transcript
-                    # These could be relative to clip start (0-60s) or absolute in video (300-360s)
-                    # depending on how segments were prepared
                     start_time = item["start_time"]
                     end_time = item["end_time"]
+                    
+                    # Validate timestamps are reasonable
+                    chunk_start = chunk[0].get("start", 0) if chunk else 0
+                    chunk_end = chunk[-1].get("end", 0) if chunk else 0
+                    
+                    if start_time < chunk_start or end_time > chunk_end:
+                        print(f"    ⚠️ Skipping B-roll with out-of-range times: {start_time:.1f}s-{end_time:.1f}s (chunk: {chunk_start:.1f}s-{chunk_end:.1f}s)")
+                        continue
+                    
+                    if end_time <= start_time:
+                        print(f"    ⚠️ Skipping B-roll with invalid duration: {start_time:.1f}s-{end_time:.1f}s")
+                        continue
+                    
+                    # Snap to nearest word/segment boundaries (within 0.3s tolerance for word precision)
+                    def snap_to_boundary(time, boundaries, tolerance=0.3):
+                        closest = min(boundaries, key=lambda x: abs(x - time))
+                        if abs(closest - time) <= tolerance:
+                            return closest
+                        return time
+                    
+                    original_start = start_time
+                    original_end = end_time
+                    start_time = snap_to_boundary(start_time, valid_times)
+                    end_time = snap_to_boundary(end_time, valid_times)
+                    
+                    if start_time != original_start or end_time != original_end:
+                        print(f"    🔧 Adjusted timing: {original_start:.2f}s-{original_end:.2f}s → {start_time:.2f}s-{end_time:.2f}s (snapped to word boundaries)")
                     
                     region = BRollRegion(
                         start_time=start_time,
@@ -207,7 +275,7 @@ class ProductionBRollAnalyzer:
                         prompt=item["visual_prompt"]
                     )
                     regions.append(region)
-                    print(f"    📍 B-roll at {start_time:.1f}s-{end_time:.1f}s: {item['reason'][:50]}")
+                    print(f"    📍 B-roll at {start_time:.1f}s-{end_time:.1f}s ({region.duration:.1f}s): {item['reason'][:50]}")
                 except KeyError as e:
                     print(f"    ⚠️ Missing field in GPT response: {e}")
                     continue
@@ -325,7 +393,7 @@ class Wan22VideoGenerator:
                 cmd.extend([
                     "--use_prompt_extend",
                     "--prompt_extend_method", "dashscope"
-                ])
+                ]) 
             
             print(f"    🔧 Running: {' '.join(cmd[:6])}... (full command with {len(cmd)} args)")
             print(f"    📂 Working directory: {self.wan22_path}")
