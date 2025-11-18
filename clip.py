@@ -1441,19 +1441,19 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             # Scale B-roll to match video dimensions
             scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}"
             
-            # Prepare B-roll: scale, set fps, loop to ensure enough frames
-            # setpts=PTS-STARTPTS ensures b-roll starts from timestamp 0
-            # loop=-1 ensures we have enough content to fill the duration window
+            # CRITICAL FIX: Use setpts to delay the B-roll video to start at the correct time
+            # The B-roll should start playing from time 0 of the B-roll file, but appear at start_time in the main timeline
             filter_parts.append(
                 f"[{broll_input}:v]{scale_filter},fps=30,"
-                f"setpts=PTS-STARTPTS,loop=-1:size=1:start=0[{broll_label}]"
+                f"trim=start=0:duration={broll_duration:.3f},"
+                f"setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
             )
             
-            # Overlay with precise enable condition - only show during the exact time window
-            # The 'enable' expression is evaluated against the main video timeline (t)
+            # Create overlay with enable condition to show only during the specified time window
+            # This ensures the B-roll only appears during its designated time period
             overlay_filter = (
                 f"{current_label}[{broll_label}]overlay=0:0:"
-                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})':shortest=0[{overlay_out}]"
+                f"enable='between(t,{broll['start_time']:.3f},{broll['end_time']:.3f})'[{overlay_out}]"
             )
             filter_parts.append(overlay_filter)
             current_label = f"[{overlay_out}]"
