@@ -133,7 +133,7 @@ class ProductionBRollAnalyzer:
         
         # Enhanced prompt optimized for Wan2.2 generation with precise timing alignment
         prompt = f"""
-            Analyze this video transcript and identify 1-2 short B-roll opportunities (2-4 seconds) that enhance viewer engagement.
+            Analyze this video transcript and identify 3 short B-roll opportunities (2-4 seconds) that enhance viewer engagement.
             
             TRANSCRIPT (with precise timestamps showing phrase boundaries in seconds):
             {transcript_with_timing}

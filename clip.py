@@ -1352,10 +1352,10 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             raise FileNotFoundError(f"B-roll files not found: {missing_broll}")
         
         # Filter and constrain B-roll segments
-        # CONSTRAINT: B-roll every ~3 seconds, 1-2 seconds duration each
+        # CONSTRAINT: B-roll every ~2 seconds, 1-2 seconds duration each
         # IMPORTANT: No B-roll in first 5 seconds to avoid sync issues
         valid_broll = []
-        last_broll_time = -3.0  # This allows spacing calculation to work
+        last_broll_time = -2.0  # This allows spacing calculation to work
         
         for broll in sorted(broll_info, key=lambda x: x["start_time"]):
             # Adjust B-roll if it starts too early (before 5 seconds)
@@ -1369,10 +1369,10 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
                 adjusted_end = min(adjusted_end + time_shift, total_duration)
                 print(f"    🔧 Adjusted B-roll from {broll['start_time']:.1f}s to {adjusted_start:.1f}s (shifted by {time_shift:.1f}s)")
                 
-            # Check 3-second spacing constraint
-            if adjusted_start - last_broll_time >= 3.0:
-                # Constrain duration to 1-2 seconds max
-                max_duration = min(2.0, adjusted_end - adjusted_start)
+            # Check 2-second spacing constraint (unified with production_broll.py)
+            if adjusted_start - last_broll_time >= 2.0:
+                # Constrain duration to 1-3 seconds max
+                max_duration = min(3.0, adjusted_end - adjusted_start)
                 constrained_end = min(
                     adjusted_start + max_duration,
                     adjusted_end,
