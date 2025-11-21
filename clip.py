@@ -399,7 +399,7 @@ def extract_clips(transcript, var ,max_clips=2):
 
     response = client.chat.completions.create(
         model="gpt-4.1-2025-04-14",
-        temperature=0.2,
+        temperature=0.5,
         messages=[ 
             {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": prompt}
@@ -1352,20 +1352,20 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             raise FileNotFoundError(f"B-roll files not found: {missing_broll}")
         
         # Filter and constrain B-roll segments
-        # CONSTRAINT: B-roll every ~2 seconds, 1-2 seconds duration each
-        # IMPORTANT: No B-roll in first 5 seconds to avoid sync issues
+        # CONSTRAINT: B-roll every ~2 seconds, 1-3 seconds duration each
+        # IMPORTANT: No B-roll in first 2 seconds to avoid sync issues
         valid_broll = []
         last_broll_time = -2.0  # This allows spacing calculation to work
         
         for broll in sorted(broll_info, key=lambda x: x["start_time"]):
-            # Adjust B-roll if it starts too early (before 5 seconds)
+            # Adjust B-roll if it starts too early (before 2 seconds)
             adjusted_start = broll["start_time"]
             adjusted_end = broll.get("end_time", broll["start_time"] + broll.get("duration", 2.0))
             
-            if adjusted_start < 5.0:
-                # Shift the B-roll to start at 5 seconds, preserving duration
-                time_shift = 5.0 - adjusted_start
-                adjusted_start = 5.0
+            if adjusted_start < 2.0:
+                # Shift the B-roll to start at 2 seconds, preserving duration
+                time_shift = 2.0 - adjusted_start
+                adjusted_start = 2.0
                 adjusted_end = min(adjusted_end + time_shift, total_duration)
                 print(f"    🔧 Adjusted B-roll from {broll['start_time']:.1f}s to {adjusted_start:.1f}s (shifted by {time_shift:.1f}s)")
                 

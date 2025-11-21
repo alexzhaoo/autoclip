@@ -189,7 +189,7 @@ class ProductionBRollAnalyzer:
         
         try:
             response = self.client.chat.completions.create(
-                model="gpt-5-mini-2025-08-07",
+                model="gpt-4.1-2025-04-14",
                 messages=[
                     {
                         "role": "system", 
