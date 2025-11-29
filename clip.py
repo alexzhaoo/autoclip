@@ -532,7 +532,7 @@ def generate_subs_from_whisper_segments(segments, output_file="captions.ass"):
     # Orange style - for SUPER significant words only
     orange_style = pysubs2.SSAStyle()
     orange_style.fontname = "Montserrat Bold"
-    orange_style.fontsize = 16
+    orange_style.fontsize = 12
     orange_style.bold = True
     orange_style.italic = False
     orange_style.primarycolor = pysubs2.Color(255, 128, 0)  # Bright orange
@@ -548,7 +548,7 @@ def generate_subs_from_whisper_segments(segments, output_file="captions.ass"):
     # White style - for everything else
     white_style = pysubs2.SSAStyle()
     white_style.fontname = "Montserrat Bold"
-    white_style.fontsize = 16
+    white_style.fontsize = 12
     white_style.bold = True
     white_style.italic = False
     white_style.primarycolor = pysubs2.Color(255, 255, 255)  # White
