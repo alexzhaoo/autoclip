@@ -1554,7 +1554,7 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
         raise  # Re-raise the exception instead of returning False
 
 
-def main(video_path, output_dir=None):
+def main(video_path, output_dir=None, generate_broll=True):
     # Set up output directories
     global CLIPS_DIR, CAPTIONS_DIR, TRANSCRIPTS_DIR, BROLL_DIR
     
@@ -1698,8 +1698,9 @@ def main(video_path, output_dir=None):
 
     final_clips = json.load(open("final_clips_aligned.json", "r", encoding="utf-8"))
 
-    # B-roll configuration
-    generate_broll = os.getenv("GENERATE_BROLL", "true").lower() == "true"
+    # B-roll configuration - use parameter value, but also allow env var override to disable
+    if generate_broll:
+        generate_broll = os.getenv("GENERATE_BROLL", "true").lower() == "true"
     print(f"🎬 B-roll generation: {'✅ Enabled' if generate_broll and BROLL_AVAILABLE else '❌ Disabled'}")
 
     for i, clip in enumerate(tqdm(final_clips, desc="Processing final clips")):
@@ -1817,6 +1818,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Extract and process video clips')
     parser.add_argument('--video', type=str, help='Path to video file or YouTube URL')
     parser.add_argument('--output_dir', type=str, default=None, help='Output directory for clips')
+    parser.add_argument('--nobroll', action='store_true', help='Disable B-roll generation')
     
     args = parser.parse_args()
     
@@ -1844,7 +1846,7 @@ if __name__ == "__main__":
 
     print(f"✅ Using video file: {video_path}")
     try:
-        main(video_path, args.output_dir)
+        main(video_path, args.output_dir, generate_broll=not args.nobroll)
     except Exception as e:
         print(f"❌ Processing failed: {e}")
         traceback.print_exc()
