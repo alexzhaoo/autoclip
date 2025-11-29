@@ -3,6 +3,7 @@ downloads/
 srts/
 transcripts/
 venv/
+outputs
 gpt_response.txt
 .env
 cookies.txt

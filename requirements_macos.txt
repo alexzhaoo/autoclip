@@ -1,0 +1,51 @@
+# macOS friendly requirements
+
+# Core PyTorch (standard pypi versions support macOS/MPS)
+torch
+torchvision
+torchaudio
+
+# Core dependencies
+opencv-python>=4.9.0.80
+diffusers>=0.31.0
+transformers>=4.49.0,<=4.51.3
+tokenizers>=0.20.3
+accelerate>=1.1.1
+tqdm
+imageio[ffmpeg]
+easydict
+ftfy
+dashscope
+imageio-ffmpeg
+numpy>=1.23.5,<2
+openai>=1.0.0
+python-dotenv>=1.0.0
+yt-dlp>=2023.1.0
+
+# Video processing
+mediapipe
+moviepy>=1.0.3
+pysubs2>=1.6.0
+pysrt>=1.1.2
+
+# Audio processing
+faster-whisper>=0.9.0
+pydub>=0.25.0
+elevenlabs>=0.2.0
+
+# Text processing
+nltk>=3.8.0
+
+# AI/ML for B-roll generation
+pillow>=10.0.0
+
+# Web requests
+requests>=2.31.0
+
+# Vast.ai SDK
+vastai-sdk>=0.1.0
+
+# Additional utilities
+pathlib2>=2.3.0
+librosa
+peft
