@@ -360,7 +360,7 @@ def extract_clips(transcript, var ,max_clips=2):
     # Truncate transcript at the last sentence before 5000 chars
     prompt = f"""
 
-       From the transcript below, extract {max_clips} short clips between 30-40 seconds that are likely to perform well on TikTok or Instagram Reels.
+       From the transcript below, extract {max_clips} short clips between 20-30 seconds that are likely to perform well on TikTok or Instagram Reels.
  
         Each clip must be completely self-contained:
         - Start at the **beginning of a complete sentence or clear idea**
@@ -1792,6 +1792,10 @@ def main(video_path, output_dir=None, generate_broll=True):
                     print(f"✅ Clip {i+1} completed with {len(broll_files)} B-roll segments: {final_out}")
                 else:
                     print(f"✅ Clip {i+1} completed: {final_out}")
+                
+                # Clean up original uncropped clip
+                if os.path.exists(out_file):
+                    os.remove(out_file)
             else:
                 raise RuntimeError(f"create_video_with_broll_integration returned False for clip {i+1}")
                 
