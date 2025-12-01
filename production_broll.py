@@ -131,11 +131,17 @@ class ProductionBRollAnalyzer:
         
         transcript_with_timing = "\n".join(transcript_lines)
         
+        # Create clean transcript for context
+        clean_transcript = " ".join([seg.get("text", "").strip() for seg in chunk])
+
         # Enhanced prompt optimized for Wan2.2 generation with precise timing alignment
         prompt = f"""
             Analyze this video transcript and identify 3 short B-roll opportunities (2-4 seconds) that enhance viewer engagement.
             
-            TRANSCRIPT (with precise timestamps showing phrase boundaries in seconds):
+            FULL CONTEXT (Read this first to understand the story flow):
+            "{clean_transcript}"
+
+            TIMED TRANSCRIPT (Use this ONLY for precise start/end times):
             {transcript_with_timing}
             
             CRITICAL TIMING RULES:
@@ -148,13 +154,13 @@ class ProductionBRollAnalyzer:
             
             For each B-roll opportunity, provide:
 
-            START_TIME – MUST be an exact timestamp from the transcript above (in seconds)
-            END_TIME – MUST be a timestamp from the transcript above (in seconds)
+            START_TIME – MUST be an exact timestamp from the TIMED TRANSCRIPT above (in seconds)
+            END_TIME – MUST be a timestamp from the TIMED TRANSCRIPT above (in seconds)
             VISUAL_PROMPT – vivid, cinematic (add the words "Symmetrical Composition" at the end of each prompt) 
             reason - why this clip fits and which transcript line it illustrates
 
-
             Suggest clear, engaging visuals with DYNAMIC MOVEMENT that reflect the transcript's ideas, themes, or emotions.
+            IMPORTANT: Use the FULL CONTEXT to understand the meaning of split sentences. Do not generate clips for isolated fragments.
             ALWAYS specify motion: camera movement (pan, tilt, zoom, dolly, tracking) AND/OR subject movement (flowing, rotating, walking, falling, rising, transforming).
             Ensure Symmetrical Composition where natural.
 
