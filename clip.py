@@ -407,8 +407,6 @@ def extract_clips(transcript, var ,max_clips=2):
 
     )
     print("GPT response:", response)
-    with open(f"gpt_response{var}.txt", "w", encoding="utf-8") as f:
-        f.write(response.choices[0].message.content)
     try:
         return safe_parse_gpt_response(response.choices[0].message.content)
     except Exception as e:
@@ -528,30 +526,39 @@ def generate_subs_from_whisper_segments(segments, output_file="captions.ass"):
     import pysubs2
     
     subs = pysubs2.SSAFile()
-    
-    # Orange style - for SUPER significant words only
-    orange_style = pysubs2.SSAStyle()
-    orange_style.fontname = "Montserrat Bold"
-    orange_style.fontsize = 12
-    orange_style.bold = True
-    orange_style.italic = False
-    orange_style.primarycolor = pysubs2.Color(255, 128, 0)  # Bright orange
-    orange_style.outlinecolor = pysubs2.Color(0, 0, 0)
-    orange_style.backcolor = pysubs2.Color(0, 0, 0, 0)
-    orange_style.borderstyle = 1
-    orange_style.outline = 2
-    orange_style.shadow = 0.8
-    orange_style.alignment = pysubs2.Alignment.BOTTOM_CENTER
-    orange_style.marginv = 50
-    subs.styles["Orange"] = orange_style
-    
-    # White style - for everything else
+
+    def _karaoke_text(words_in_group, group_start_ms, group_end_ms):
+        """Build ASS karaoke text using per-word timings (\k centiseconds)."""
+        group_duration_cs = max(1, int(round((group_end_ms - group_start_ms) / 10)))
+
+        cleaned_words = [remove_punctuation(w["text"].strip()).upper() for w in words_in_group]
+        word_durations_cs = []
+        for w in words_in_group:
+            dur_s = max(0.0, float(w["end"]) - float(w["start"]))
+            word_durations_cs.append(max(1, int(round(dur_s * 100))))
+
+        # Adjust final word so summed durations match the event duration.
+        total_cs = sum(word_durations_cs)
+        diff_cs = group_duration_cs - total_cs
+        if diff_cs != 0 and word_durations_cs:
+            word_durations_cs[-1] = max(1, word_durations_cs[-1] + diff_cs)
+
+        parts = []
+        for idx, (word_text, dur_cs) in enumerate(zip(cleaned_words, word_durations_cs)):
+            if idx > 0:
+                parts.append(" ")
+            parts.append(f"{{\\k{dur_cs}}}{word_text}")
+        return "".join(parts)
+
+    # Single style: karaoke progressively changes SecondaryColour -> PrimaryColour.
+    # We want words to turn ORANGE as they're spoken: unsung=white (secondary), sung=orange (primary).
     white_style = pysubs2.SSAStyle()
     white_style.fontname = "Montserrat Bold"
     white_style.fontsize = 12
     white_style.bold = True
     white_style.italic = False
-    white_style.primarycolor = pysubs2.Color(255, 255, 255)  # White
+    white_style.primarycolor = pysubs2.Color(255, 15, 0)  #  (karaoke highlight)
+    white_style.secondarycolor = pysubs2.Color(255, 255, 255)  # White (not-yet-spoken)
     white_style.outlinecolor = pysubs2.Color(0, 0, 0)
     white_style.backcolor = pysubs2.Color(0, 0, 0, 0)
     white_style.borderstyle = 1
@@ -560,36 +567,26 @@ def generate_subs_from_whisper_segments(segments, output_file="captions.ass"):
     white_style.alignment = pysubs2.Alignment.BOTTOM_CENTER
     white_style.marginv = 50
     subs.styles["White"] = white_style
-    
-    # Track spacing for orange highlights
-    total_groups = len(segments) // 3 + (1 if len(segments) % 3 != 0 else 0)
-    
-    # Group words into groups of three
+
+    # Group words into groups of three; karaoke highlights each word as spoken
     for i in range(0, len(segments), 3):
         words_in_group = segments[i:i+3]
-        group_index = i // 3
-        
         # Start time from first word
         start_ms = int(words_in_group[0]['start'] * 1000)
-        
         # End time from last word in group
         end_ms = int(words_in_group[-1]['end'] * 1000)
-        
-        # Combine all words in the group and make uppercase
-        text = " ".join([remove_punctuation(word['text'].strip()) for word in words_in_group]).upper()
-        
-        # Determine style based on SUPER selective criteria
-        style_name = analyze_semantic_importance_selective(words_in_group, group_index, total_groups)
+
+        text = _karaoke_text(words_in_group, start_ms, end_ms)
         
         subs.append(pysubs2.SSAEvent(
             start=start_ms,
             end=end_ms,
             text=text,
-            style=style_name
+            style="White"
         ))
     
     subs.save(output_file)
-    print(f"✅ SUPER selective semantic-based subtitles saved to {output_file}")
+    print(f"✅ Karaoke (word-by-word) subtitles saved to {output_file}")
 
 
 def remove_punctuation(text):

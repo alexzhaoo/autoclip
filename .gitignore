@@ -35,3 +35,5 @@ post_processing
 add_watermark.py
 music
 final_clips_aligned.json
+final_clips
+clips_archive
