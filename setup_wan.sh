@@ -9,7 +9,7 @@ LIGHTX2V_DIR="${ROOT_DIR}/LightX2V"
 BASE_REPO_ID="Wan-AI/Wan2.2-T2V-A14B"
 DISTILL_LORA_REPO_ID="lightx2v/Wan2.2-Distill-Loras"
 
-# File Names (Files are at the ROOT of the repo)
+# File Names (Exact Match)
 HIGH_NOISE_LORA="wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
 LOW_NOISE_LORA="wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors"
 
@@ -17,7 +17,7 @@ echo "[setup_wan] root: ${ROOT_DIR}"
 mkdir -p "${MODELS_DIR}/loras"
 
 # -------------------------
-# System deps
+# 1. System Dependencies
 # -------------------------
 if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get -o DPkg::Lock::Timeout=300 update
@@ -25,7 +25,7 @@ if command -v apt-get >/dev/null 2>&1; then
 fi
 
 # -------------------------
-# Python env
+# 2. Python Environment
 # -------------------------
 if [ ! -d "${ROOT_DIR}/.venv" ]; then
   python3 -m venv "${ROOT_DIR}/.venv"
@@ -35,7 +35,7 @@ source "${ROOT_DIR}/.venv/bin/activate"
 python -m pip install --upgrade pip
 
 # -------------------------
-# Install LightX2V
+# 3. Install LightX2V & Modern Hugging Face
 # -------------------------
 if [ ! -d "${LIGHTX2V_DIR}" ]; then
   git clone --depth 1 https://github.com/ModelTC/LightX2V.git "${LIGHTX2V_DIR}"
@@ -46,17 +46,16 @@ if [ -f "${ROOT_DIR}/requirements.txt" ]; then
   python -m pip install -r "${ROOT_DIR}/requirements.txt"
 fi
 
-# NOTE: transformers/tokenizers currently require huggingface_hub < 1.0.
-python -m pip install --upgrade "huggingface_hub>=0.24.0,<1.0" hf_transfer
+# IMPORTANT: 'hf' command requires a newer version. 
+# The [cli] extra is deprecated in newer versions; the CLI is now core.
+python -m pip install --upgrade "huggingface_hub>=0.27.0" hf_transfer
 export HF_HUB_ENABLE_HF_TRANSFER=1
 
 # -------------------------
-# Download weights
+# 4. Download Weights (The Modern Way)
 # -------------------------
-# Hugging Face recommends the `hf` CLI. It's shipped with huggingface_hub.
 if ! command -v hf >/dev/null 2>&1; then
-  echo "hf CLI not found. Ensure the venv is active and huggingface_hub is installed." >&2
-  echo "Try: python -m pip install -U \"huggingface_hub>=0.24.0,<1.0\"" >&2
+  echo "Error: 'hf' command not found. Ensure pip install succeeded." >&2
   exit 1
 fi
 
@@ -64,27 +63,20 @@ if [ -n "${HF_TOKEN:-}" ]; then
   export HUGGINGFACE_HUB_TOKEN="${HF_TOKEN}"
 fi
 
-# 1. Base Model Download (Strict Filters)
-# We exclude "high_noise_model" folders to stop that 10GB download
-echo "[setup_wan] Downloading base model: ${BASE_REPO_ID}"
+echo "[setup_wan] Downloading Base Model (Excluding massive noise files)..."
+# We exclude the 'high_noise_model' folder to prevent downloading the fine-tuned weights by accident
 hf download "${BASE_REPO_ID}" \
   --local-dir "${MODELS_DIR}/Wan2.2-T2V-A14B" \
-  --local-dir-use-symlinks False \
   --exclude "*high_noise_model*" "*low_noise_model*" "*.git*"
 
-# 2. LoRA Download (Direct Target)
-# We target the files exactly so it doesn't download the whole repo
-echo "[setup_wan] Downloading High Noise LoRA..."
-hf download "${DISTILL_LORA_REPO_ID}" "${HIGH_NOISE_LORA}" \
-  --local-dir "${MODELS_DIR}/loras" \
-  --local-dir-use-symlinks False
+echo "[setup_wan] Downloading Specific Distill LoRAs..."
+# We use --include to force download ONLY these files, ignoring the rest of the repo
+hf download "${DISTILL_LORA_REPO_ID}" \
+  --include "${HIGH_NOISE_LORA}" \
+  --local-dir "${MODELS_DIR}/loras"
 
-echo "[setup_wan] Downloading Low Noise LoRA..."
-hf download "${DISTILL_LORA_REPO_ID}" "${LOW_NOISE_LORA}" \
-  --local-dir "${MODELS_DIR}/loras" \
-  --local-dir-use-symlinks False
+hf download "${DISTILL_LORA_REPO_ID}" \
+  --include "${LOW_NOISE_LORA}" \
+  --local-dir "${MODELS_DIR}/loras"
 
-echo "[setup_wan] Done. Models layout:" 
-echo "  - ${MODELS_DIR}/Wan2.2-T2V-A14B"
-echo "  - ${MODELS_DIR}/loras/${HIGH_NOISE_LORA}"
-echo "  - ${MODELS_DIR}/loras/${LOW_NOISE_LORA}"
+echo "[setup_wan] Done. Ready for generation."
