@@ -1,16 +1,9 @@
-# ⚠️ Torch + flash-attn must match for Wan2.2 to work
-# This file reflects the versions tested in the container:
-# PyTorch 2.8.0 with CUDA 12.8, FlashAttention 2.8.3
-# Install PyTorch with CUDA 12.8 wheels via:
-# pip install torch==2.8.0+cu128 torchvision==0.23.0+cu128 torchaudio==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.8.0+cu128
-torchvision==0.23.0+cu128
-torchaudio==2.8.0+cu128
+
+torch
 
 # FlashAttention (install manually with build flags)
 # Run: pip install flash-attn==2.8.3 --no-build-isolation --use-pep517
-flash-attn==2.8.3
+# flash-attn
 
 # Core dependencies
 opencv-python>=4.9.0.80
@@ -62,3 +55,14 @@ dataclasses>=0.6; python_version<"3.7"
 decord
 librosa
 peft
+
+# LightX2V Wan2.2 T2V 4-step distill backend
+# (Installed from GitHub; used by video_gen.py)
+lightx2v @ git+https://github.com/ModelTC/LightX2V.git
+
+# Hugging Face download tooling used by setup_wan.sh
+huggingface_hub>=0.24.0
+hf_transfer
+
+# Common model file format dependency (often pulled transitively, but keep explicit)
+safetensors>=0.4.0

@@ -4,6 +4,33 @@ import subprocess
 import glob
 import argparse
 
+
+def _random_pitch_factor(min_factor: float = 0.97, max_factor: float = 1.03) -> float:
+    """Return a tiny random pitch factor in [min_factor, max_factor]."""
+    if min_factor <= 0 or max_factor <= 0 or max_factor < min_factor:
+        raise ValueError("Invalid pitch factor range")
+    return random.uniform(min_factor, max_factor)
+
+
+def _ffmpeg_pitch_shift_filter(pitch_factor: float, base_sample_rate: int = 48000) -> str:
+    """
+    Build an FFmpeg audio filter that shifts pitch by pitch_factor while preserving duration.
+
+    Technique: resample -> change sample rate (pitch+tempo) -> resample -> compensate tempo.
+    """
+    if pitch_factor <= 0:
+        raise ValueError("pitch_factor must be > 0")
+    if base_sample_rate <= 0:
+        raise ValueError("base_sample_rate must be > 0")
+
+    inv = 1.0 / pitch_factor
+    return (
+        f"aresample={base_sample_rate},"
+        f"asetrate={base_sample_rate}*{pitch_factor:.6f},"
+        f"aresample={base_sample_rate},"
+        f"atempo={inv:.6f}"
+    )
+
 def add_music_to_clips(clips_dir="clips", music_dir="music", output_dir="final_clips", target_lufs=-25.0):
     """
     Overlays random background music from music_dir onto clips in clips_dir.
@@ -44,8 +71,14 @@ def add_music_to_clips(clips_dir="clips", music_dir="music", output_dir="final_c
         music_path = random.choice(music_files)
         music_name = os.path.basename(music_path)
 
+        # Per-clip tiny pitch shift (+/- 3%)
+        pitch_factor = _random_pitch_factor(0.97, 1.03)
+        pitch_pct = (pitch_factor - 1.0) * 100.0
+        pitch_filter = _ffmpeg_pitch_shift_filter(pitch_factor)
+
         print(f"\n🎵 Processing: {filename}")
         print(f"   + Music: {music_name}")
+        print(f"   ~ Pitch: {pitch_factor:.4f} ({pitch_pct:+.2f}%)")
 
         # FFmpeg command explanation:
         # -i clip_path: Input video (stream 0)
@@ -59,13 +92,19 @@ def add_music_to_clips(clips_dir="clips", music_dir="music", output_dir="final_c
         # -c:v copy: Copy video stream directly
         # -c:a aac: Encode audio to AAC
         
+        filter_complex = (
+            f"[1:a]loudnorm=I={target_lufs}:TP=-1.5:LRA=11[bgm];"
+            f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[mix];"
+            f"[mix]{pitch_filter}[a]"
+        )
+
         cmd = [
             "ffmpeg", "-y",
             "-i", clip_path,
             "-stream_loop", "-1", 
             "-i", music_path,
             "-filter_complex",
-            f"[1:a]loudnorm=I={target_lufs}:TP=-1.5:LRA=11[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[a]",
+            filter_complex,
             "-map", "0:v",
             "-map", "[a]",
             "-c:v", "copy",
@@ -92,7 +131,7 @@ def add_music_to_clips(clips_dir="clips", music_dir="music", output_dir="final_c
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Add background music to video clips")
     parser.add_argument("--target_lufs", type=float, default=-25.0, help="Target loudness in LUFS (default -25.0 for background music)")
-    parser.add_argument("--clips_dir", type=str, default="clips/clippyths", help="Directory containing source clips")
+    parser.add_argument("--clips_dir", type=str, default="clips/clips", help="Directory containing source clips")
     parser.add_argument("--music_dir", type=str, default="music", help="Directory containing music mp3s")
     parser.add_argument("--output_dir", type=str, default="final_clips", help="Directory for output files")
     

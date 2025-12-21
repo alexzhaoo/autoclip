@@ -23,12 +23,15 @@ def test_api_connection():
 
 def create_instance():
     """Launch a new instance directly with fixed GPU/image"""
-    print("💰 Launching instance with RTX 5090")
+    gpu_name = os.environ.get("VAST_GPU_NAME", "RTX_5090")
+    image = os.environ.get("VAST_IMAGE", "pytorch/pytorch")
+    disk_gb = int(os.environ.get("VAST_DISK_GB", "200"))
+    print(f"💰 Launching instance with {gpu_name}")
     instance = vast.launch_instance(
         num_gpus="1",
-        gpu_name="RTX_5090",
-        image="pytorch/pytorch",
-        disk=100
+        gpu_name=gpu_name,
+        image=image,
+        disk=disk_gb,
     )
     print(instance)
     return instance
@@ -79,19 +82,22 @@ echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
 
 sudo apt update && sudo apt install -y ffmpeg git python3-pip git-lfs curl
 
+pip install --upgrade pip
+
 # Install latest yt-dlp
 pip install --upgrade yt-dlp
 
-pip install huggingface_hub
-git clone https://github.com/Wan-Video/Wan2.2.git
-pip install -r Wan2.2/requirements.txt
-
-# Download model to the workspace directory (not inside Wan2.2)
-HUGGINGFACE_HUB_TOKEN={HF_TOKEN} huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir /workspace/Wan2.2-TI2V-5B
-cd /workspace
-
 git clone https://github.com/alexzhaoo/autoclip pipeline
-pip install -r pipeline/requirements.txt
+cd /workspace/pipeline
+
+export OPENAI_API_KEY={OPENAI_KEY}
+export HF_TOKEN={HF_TOKEN}
+
+# Setup LightX2V + download Wan2.2 T2V A14B + Dual-LoRA into ./models/
+chmod +x ./setup_wan.sh
+./setup_wan.sh
+
+source /workspace/pipeline/.venv/bin/activate
 
 # Download NLTK data with multiple methods and fallbacks
 echo "📚 Downloading NLTK data..."
@@ -132,11 +138,10 @@ export NLTK_DATA=/workspace/nltk_data
 echo "Testing YouTube download..."
 yt-dlp --print filename "https://www.youtube.com/watch?v=hCW2NHbWNwA&t=327s" || echo "YouTube download may fail"
 
-export WAN22_PATH=/workspace/Wan2.2
-export WAN22_MODEL=ti2v-5B
-export OPENAI_API_KEY={OPENAI_KEY}
+export WAN22_BACKEND=lightx2v
+export WAN22_MODELS_DIR=/workspace/pipeline/models
 mkdir -p {remote_outdir}
-python pipeline/clip.py --video "{video_arg}" --output_dir {remote_outdir}
+python /workspace/pipeline/clip.py --video "{video_arg}" --output_dir {remote_outdir}
 """
 
     print("📝 Creating setup script on remote machine...")

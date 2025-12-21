@@ -520,15 +520,44 @@ class Wan22VideoGenerator:
             print(f"  ❌ Wan2.2 generation error: {e}")
             return False
 
+
+class Wan22LightX2VVideoGenerator:
+    """Wan2.2 T2V 4-step distill generator via LightX2V (Dual-LoRA)."""
+
+    def __init__(self, models_dir: Optional[str] = None):
+        from video_gen import Wan22LightX2VGenerator
+
+        self._gen = Wan22LightX2VGenerator(models_dir=models_dir or os.getenv("WAN22_MODELS_DIR", "./models"))
+
+    def generate_broll_video(self, prompt: str, duration: float, output_path: str) -> bool:
+        try:
+            _ = duration
+            self._gen.generate_clip(prompt=prompt, output_path=output_path)
+            return True
+        except Exception as e:
+            print(f"  ❌ LightX2V generation error: {e}")
+            return False
+
 class ProductionBRollPipeline:
     """Complete production B-roll pipeline with Wan2.2 integration"""
     
     def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "16:9"):
         self.analyzer = ProductionBRollAnalyzer()
-        self.generator = Wan22VideoGenerator(wan22_path, model_type, aspect_ratio)
+        self.generator = self._init_generator(wan22_path, model_type, aspect_ratio)
         self.wan22_path = wan22_path
         self.model_type = model_type
         self.aspect_ratio = aspect_ratio
+
+    def _init_generator(self, wan22_path: Optional[str], model_type: str, aspect_ratio: str):
+        prefer_lightx2v = os.getenv("WAN22_BACKEND", "lightx2v").lower() == "lightx2v"
+        if prefer_lightx2v:
+            try:
+                print("🌟 Using LightX2V Wan2.2 T2V 4-step distill (Dual-LoRA) backend")
+                return Wan22LightX2VVideoGenerator()
+            except Exception as e:
+                print(f"⚠️ LightX2V backend unavailable, falling back to legacy Wan2.2 generate.py: {e}")
+
+        return Wan22VideoGenerator(wan22_path, model_type, aspect_ratio)
     
     def process_clip(self, clip_data: Dict) -> bool:
         """Process a complete clip with B-roll generation"""
@@ -615,7 +644,7 @@ class ProductionBRollPipeline:
 # Configuration
 PRODUCTION_CONFIG = {
     "wan22_path": os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2"),
-    "model_type": os.getenv("WAN22_MODEL", "ti2v-5B"),  # ti2v-5B, t2v-A14B, i2v-A14B
+    "model_type": os.getenv("WAN22_MODEL", "t2v-A14B"),
     "aspect_ratio": os.getenv("BROLL_ASPECT_RATIO", "16:9"),  # Use 16:9 landscape since that's working
 }
 

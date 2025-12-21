@@ -5,6 +5,7 @@ import subprocess
 import json
 import os
 import shutil
+import random
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -261,8 +262,14 @@ def create_grey_freeze_frame(input_clip, output_clip, duration):
     pre_crop_width = int(pre_crop_height * 9 / 16)
     pre_crop_width = min(pre_crop_width, width)
 
-    speaker_x = detect_speaker_center(input_clip)
-    crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
+    region = detect_speaker_face_region(input_clip)
+    crop_x = choose_crop_x(
+        frame_width=width,
+        crop_width=pre_crop_width,
+        preferred_center_x=region["center_x"],
+        face_left_x=region.get("face_left_x"),
+        face_right_x=region.get("face_right_x"),
+    )
     crop_y = 0
 
     # FFmpeg video filter: extract first frame -> crop -> grey filter -> loop
@@ -360,7 +367,7 @@ def extract_clips(transcript, var ,max_clips=2):
     # Truncate transcript at the last sentence before 5000 chars
     prompt = f"""
 
-       From the transcript below, extract {max_clips} short clips between 20-30 seconds that are likely to perform well on TikTok or Instagram Reels.
+       From the transcript below, extract {max_clips} short clips between 10-30 seconds that are interesting and high-impact.
  
         Each clip must be completely self-contained:
         - Start at the **beginning of a complete sentence or clear idea**
@@ -522,53 +529,132 @@ def cut_clip(input_video, start, end, output_path):
     subprocess.run(cmd, check=True)
 
 
-def generate_subs_from_whisper_segments(segments, output_file="captions.ass"):
+def generate_subs_from_whisper_segments(segments, output_file="captions.ass", style_seed: int | None = None):
     import pysubs2
     
     subs = pysubs2.SSAFile()
 
-    def _karaoke_text(words_in_group, group_start_ms, group_end_ms):
-        """Build ASS karaoke text using per-word timings (\k centiseconds)."""
-        group_duration_cs = max(1, int(round((group_end_ms - group_start_ms) / 10)))
+    rng = random.Random(style_seed) if style_seed is not None else random
 
-        cleaned_words = [remove_punctuation(w["text"].strip()).upper() for w in words_in_group]
-        word_durations_cs = []
-        for w in words_in_group:
-            dur_s = max(0.0, float(w["end"]) - float(w["start"]))
-            word_durations_cs.append(max(1, int(round(dur_s * 100))))
+    # Per-clip randomized style (kept within "safe" ranges for readability)
+    # Note: ASS will fall back if a font isn't installed.
+    font_candidates = [
+        "Montserrat Bold",
+        "Segoe UI Black",
+        "Arial Black",
+        "Impact",
+        "Calibri",
+        "Segoe UI",
+    ]
+    fontname = rng.choice(font_candidates)
 
-        # Adjust final word so summed durations match the event duration.
-        total_cs = sum(word_durations_cs)
-        diff_cs = group_duration_cs - total_cs
-        if diff_cs != 0 and word_durations_cs:
-            word_durations_cs[-1] = max(1, word_durations_cs[-1] + diff_cs)
+    # Base color stays near-white for readability; highlight is vivid.
+    base_colors = [
+        pysubs2.Color(255, 255, 255),
+        pysubs2.Color(255, 250, 240),
+        pysubs2.Color(245, 250, 255),
+    ]
+    highlight_colors = [
+        pysubs2.Color(255, 15, 0),    # orange/red
+        pysubs2.Color(255, 200, 0),   # gold
+        pysubs2.Color(0, 220, 255),   # cyan
+        pysubs2.Color(110, 255, 0),   # lime
+        pysubs2.Color(255, 70, 200),  # pink
+    ]
+    base_primary = rng.choice(base_colors)
+    highlight_primary = rng.choice([c for c in highlight_colors if c != base_primary])
 
+    # Position: top / middle / bottom, with optional left/center/right.
+    alignment_choices = [
+        pysubs2.Alignment.TOP_CENTER,
+        pysubs2.Alignment.MIDDLE_CENTER,
+        pysubs2.Alignment.BOTTOM_CENTER,
+    ]
+    alignment = rng.choice(alignment_choices)
+
+    # Keep some padding from the edges.
+    if alignment in (pysubs2.Alignment.TOP_CENTER, pysubs2.Alignment.TOP_LEFT, pysubs2.Alignment.TOP_RIGHT):
+        marginv = rng.randint(40, 140)
+    elif alignment in (pysubs2.Alignment.MIDDLE_CENTER, pysubs2.Alignment.MIDDLE_LEFT, pysubs2.Alignment.MIDDLE_RIGHT):
+        marginv = rng.randint(0, 80)
+    else:
+        marginv = rng.randint(60, 180)
+
+    margin_side = rng.randint(60, 120)
+
+    # Font size is intentionally small because PlayRes isn't explicitly set;
+    # keep close to existing values to avoid unexpected scaling.
+    fontsize = rng.randint(11, 14)
+
+    outline = rng.choice([2, 3])
+    shadow = rng.choice([0.6, 0.8, 1.0])
+
+    # Subtle animation so captions don't pop in abruptly.
+    # \fad(fade_in_ms, fade_out_ms)
+    fade_in_ms = 120
+    fade_out_ms = 50
+
+    def _clean_words(words_in_group):
+        return [remove_punctuation(w["text"].strip()).upper() for w in words_in_group]
+
+    def _highlight_overlay_text(cleaned_words, highlight_index: int):
+        """Overlay text: only one word visible (orange), others fully transparent but keep spacing."""
         parts = []
-        for idx, (word_text, dur_cs) in enumerate(zip(cleaned_words, word_durations_cs)):
+        for idx, word_text in enumerate(cleaned_words):
             if idx > 0:
                 parts.append(" ")
-            parts.append(f"{{\\k{dur_cs}}}{word_text}")
+            if idx == highlight_index:
+                parts.append("{\\alpha&H00&}" + word_text)
+            else:
+                parts.append("{\\alpha&HFF&}" + word_text)
         return "".join(parts)
 
-    # Single style: karaoke progressively changes SecondaryColour -> PrimaryColour.
-    # We want words to turn ORANGE as they're spoken: unsung=white (secondary), sung=orange (primary).
+    # Base style (varies per clip).
     white_style = pysubs2.SSAStyle()
-    white_style.fontname = "Montserrat Bold"
-    white_style.fontsize = 12
+    white_style.fontname = fontname
+    white_style.fontsize = fontsize
     white_style.bold = True
     white_style.italic = False
-    white_style.primarycolor = pysubs2.Color(255, 15, 0)  #  (karaoke highlight)
-    white_style.secondarycolor = pysubs2.Color(255, 255, 255)  # White (not-yet-spoken)
+    white_style.primarycolor = base_primary
     white_style.outlinecolor = pysubs2.Color(0, 0, 0)
     white_style.backcolor = pysubs2.Color(0, 0, 0, 0)
     white_style.borderstyle = 1
-    white_style.outline = 2
-    white_style.shadow = 0.8
-    white_style.alignment = pysubs2.Alignment.BOTTOM_CENTER
-    white_style.marginv = 50
+    white_style.outline = outline
+    white_style.shadow = shadow
+    white_style.alignment = alignment
+    white_style.marginv = marginv
+    if alignment in (pysubs2.Alignment.BOTTOM_LEFT, pysubs2.Alignment.TOP_LEFT, pysubs2.Alignment.MIDDLE_LEFT):
+        white_style.marginl = margin_side
+        white_style.marginr = 20
+    elif alignment in (pysubs2.Alignment.BOTTOM_RIGHT, pysubs2.Alignment.TOP_RIGHT, pysubs2.Alignment.MIDDLE_RIGHT):
+        white_style.marginl = 20
+        white_style.marginr = margin_side
+    else:
+        white_style.marginl = 40
+        white_style.marginr = 40
     subs.styles["White"] = white_style
 
-    # Group words into groups of three; karaoke highlights each word as spoken
+    # Highlight style: vivid overlay for the currently-spoken word.
+    highlight_style = pysubs2.SSAStyle()
+    highlight_style.fontname = fontname
+    highlight_style.fontsize = fontsize
+    highlight_style.bold = True
+    highlight_style.italic = False
+    highlight_style.primarycolor = highlight_primary
+    highlight_style.outlinecolor = pysubs2.Color(0, 0, 0)
+    highlight_style.backcolor = pysubs2.Color(0, 0, 0, 0)
+    highlight_style.borderstyle = 1
+    highlight_style.outline = outline
+    highlight_style.shadow = shadow
+    highlight_style.alignment = alignment
+    highlight_style.marginv = marginv
+    highlight_style.marginl = white_style.marginl
+    highlight_style.marginr = white_style.marginr
+    subs.styles["Highlight"] = highlight_style
+
+    # Group words into groups of three.
+    # We render a base white line for the whole group, then an orange overlay for each word
+    # only during that word's time. After the word ends, the overlay disappears -> it returns to white.
     for i in range(0, len(segments), 3):
         words_in_group = segments[i:i+3]
         # Start time from first word
@@ -576,17 +662,38 @@ def generate_subs_from_whisper_segments(segments, output_file="captions.ass"):
         # End time from last word in group
         end_ms = int(words_in_group[-1]['end'] * 1000)
 
-        text = _karaoke_text(words_in_group, start_ms, end_ms)
-        
+        cleaned_words = _clean_words(words_in_group)
+        base_text = " ".join(cleaned_words)
+
         subs.append(pysubs2.SSAEvent(
             start=start_ms,
             end=end_ms,
-            text=text,
-            style="White"
+            text=f"{{\\fad({fade_in_ms},{fade_out_ms})}}" + base_text,
+            style="White",
+            layer=1,
         ))
+
+        # Subtle fade on the highlight so it feels smooth.
+        highlight_fade_in_ms = min(60, fade_in_ms)
+        highlight_fade_out_ms = min(60, fade_out_ms)
+
+        for j, w in enumerate(words_in_group):
+            w_start = int(float(w["start"]) * 1000)
+            w_end = int(float(w["end"]) * 1000)
+            if w_end <= w_start:
+                continue
+
+            overlay_text = _highlight_overlay_text(cleaned_words, j)
+            subs.append(pysubs2.SSAEvent(
+                start=w_start,
+                end=w_end,
+                text=f"{{\\fad({highlight_fade_in_ms},{highlight_fade_out_ms})}}" + overlay_text,
+                style="Highlight",
+                layer=2,
+            ))
     
     subs.save(output_file)
-    print(f"✅ Karaoke (word-by-word) subtitles saved to {output_file}")
+    print(f"✅ Word-highlight (returns to white) subtitles saved to {output_file}")
 
 
 def remove_punctuation(text):
@@ -653,8 +760,14 @@ def overlay_captions(video_file, ass_file, output_file):
             pre_crop_width = int(pre_crop_height * 9 / 16)
             pre_crop_width = min(pre_crop_width, width)
 
-            speaker_x = detect_speaker_center(video_file)
-            crop_x = max(0, min(speaker_x - pre_crop_width // 2, width - pre_crop_width))
+            region = detect_speaker_face_region(video_file)
+            crop_x = choose_crop_x(
+                frame_width=width,
+                crop_width=pre_crop_width,
+                preferred_center_x=region["center_x"],
+                face_left_x=region.get("face_left_x"),
+                face_right_x=region.get("face_right_x"),
+            )
             crop_y = 0  # You can adjust this if you want vertical centering
 
             # QUALITY FIX: Crop but don't upscale yet - do final scaling only
@@ -1029,41 +1142,183 @@ def align_clip_times_to_segments(clip, all_segments):
 
     
 def detect_speaker_center(video_path):
-    mp_face = mp.solutions.face_detection
-    detector = mp_face.FaceDetection(model_selection=1, min_detection_confidence=0.6)
+    return int(detect_speaker_face_region(video_path)["center_x"])
 
+
+def choose_crop_x(
+    frame_width: int,
+    crop_width: int,
+    preferred_center_x: float,
+    face_left_x: float | None = None,
+    face_right_x: float | None = None,
+    *,
+    margin_ratio: float = 0.08,
+    min_margin_px: int = 24,
+):
+    """Pick a crop x that is (1) near preferred center and (2) keeps the face bbox inside the crop.
+
+    This prevents "half face" crops when the detected face is near the edge.
+    """
+    if frame_width <= 0 or crop_width <= 0:
+        return 0
+
+    crop_width = min(crop_width, frame_width)
+    max_x = max(0, frame_width - crop_width)
+    base_x = int(round(preferred_center_x - crop_width / 2))
+    base_x = max(0, min(base_x, max_x))
+
+    if face_left_x is None or face_right_x is None:
+        return base_x
+
+    margin_px = max(min_margin_px, int(round(crop_width * margin_ratio)))
+    min_allowed = int(round(face_right_x + margin_px - crop_width))
+    max_allowed = int(round(face_left_x - margin_px))
+
+    # If face bbox is wider than crop (or margins too large), fall back to base.
+    if min_allowed > max_allowed:
+        return base_x
+
+    # Intersect with overall bounds.
+    lo = max(0, min_allowed)
+    hi = min(max_x, max_allowed)
+    if lo > hi:
+        return base_x
+
+    return max(lo, min(base_x, hi))
+
+
+def detect_speaker_face_region(
+    video_path,
+    *,
+    num_samples: int = 12,
+    min_detection_confidence: float = 0.6,
+):
+    """Detect a stable face region across the clip and return a robust horizontal center.
+
+    Returns:
+        dict with:
+          - center_x (float)
+          - face_left_x (float|None)
+          - face_right_x (float|None)
+          - frame_width (int)
+    """
     cap = cv2.VideoCapture(video_path)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    if not cap.isOpened():
+        return {"center_x": 360.0, "face_left_x": None, "face_right_x": None, "frame_width": 720}
+
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    results = []
 
-    # Avoid division by zero and ensure at least 1 sample
-    sample_every = max(1, frame_count // 30) if frame_count > 0 else 1
+    if frame_width <= 0 or frame_height <= 0:
+        cap.release()
+        return {"center_x": 360.0, "face_left_x": None, "face_right_x": None, "frame_width": 720}
 
-    frame_idx = 0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    for frame_idx in trange(total_frames, desc="Detecting faces"):
-        ret, frame = cap.read()
-        if not ret:
+    if frame_count <= 0:
+        frame_count = 1
+
+    def _make_sample_indices(n: int):
+        # Sample frames between 5% and 95% of the clip to avoid fades/intro frames.
+        if n < 1:
+            n = 1
+        start_idx = int(frame_count * 0.05)
+        end_idx = max(start_idx, int(frame_count * 0.95) - 1)
+        if end_idx <= start_idx:
+            return [0]
+        indices = np.linspace(start_idx, end_idx, num=n)
+        indices = [int(round(x)) for x in indices]
+        # Keep stable ordering + uniqueness
+        return list(dict.fromkeys(indices))
+
+    def _best_bbox_from_detections(detections):
+        # Choose the best detection: highest score, tie-breaker by larger area.
+        best = None
+        best_score = -1.0
+        best_area = -1.0
+        for d in detections:
+            score = float(d.score[0]) if getattr(d, "score", None) else 0.0
+            box = d.location_data.relative_bounding_box
+            area = float(box.width * box.height)
+            if score > best_score or (score == best_score and area > best_area):
+                best = d
+                best_score = score
+                best_area = area
+        if best is None:
+            return None
+
+        box = best.location_data.relative_bounding_box
+        # Convert relative bbox to absolute pixels; clamp to frame bounds.
+        left = max(0.0, float(box.xmin) * frame_width)
+        right = min(float(frame_width), float(box.xmin + box.width) * frame_width)
+        if right <= left:
+            return None
+        return left, right
+
+    # Multi-pass strategy:
+    # - Try both MediaPipe models (0 short-range, 1 full-range)
+    # - If we still don't find faces (common with edge/partial faces), relax confidence
+    # - If still failing, increase the number of sampled frames before giving up
+    mp_face = mp.solutions.face_detection
+    conf_lo = max(0.35, min_detection_confidence - 0.2)
+    detection_passes = [
+        (1, min_detection_confidence),
+        (0, min_detection_confidence),
+        (1, conf_lo),
+        (0, conf_lo),
+    ]
+
+    centers: list[float] = []
+    lefts: list[float] = []
+    rights: list[float] = []
+
+    # Escalate sampling if needed, but cap work to keep it fast.
+    sample_sizes = [num_samples, max(num_samples, 24), max(num_samples, 48)]
+    sample_sizes = list(dict.fromkeys([max(1, int(s)) for s in sample_sizes]))
+
+    for sample_n in sample_sizes:
+        sample_indices = _make_sample_indices(sample_n)
+        for model_selection, conf in detection_passes:
+            detector = mp_face.FaceDetection(model_selection=model_selection, min_detection_confidence=conf)
+
+            for idx in sample_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                detection_result = detector.process(rgb)
+                detections = getattr(detection_result, "detections", None)
+                if not detections:
+                    continue
+
+                bbox = _best_bbox_from_detections(detections)
+                if bbox is None:
+                    continue
+                left, right = bbox
+                center = (left + right) / 2.0
+                centers.append(center)
+                lefts.append(left)
+                rights.append(right)
+
+            # If we have enough samples, stop escalating.
+            if len(centers) >= 3:
+                break
+        if len(centers) >= 3:
             break
-
-        if frame_idx % sample_every == 0:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            detection_result = detector.process(rgb)
-            detections = getattr(detection_result, "detections", None)
-            if detections and len(detections) > 0:
-                box = detections[0].location_data.relative_bounding_box
-                x_center = (box.xmin + box.width / 2) * width
-                results.append(x_center)
-
-        frame_idx += 1
 
     cap.release()
 
-    # Fallback to center if no faces detected
-    if not results:
-        return width // 2 if width else 360  # 360 is a safe fallback for 720px crop
-    return int(np.median(results))
+    if not centers:
+        # Fallback: if face detection fails (often when the face is extremely small or mostly out-of-frame),
+        # center-crop rather than crashing.
+        return {"center_x": float(frame_width / 2), "face_left_x": None, "face_right_x": None, "frame_width": frame_width}
+
+    center_x = float(np.median(centers))
+    # Use a slightly wider robust bbox than the median to reduce the chance of edge-cutting.
+    face_left_x = float(np.percentile(lefts, 25))
+    face_right_x = float(np.percentile(rights, 75))
+    return {"center_x": center_x, "face_left_x": face_left_x, "face_right_x": face_right_x, "frame_width": frame_width}
 
 
 
@@ -1748,16 +2003,52 @@ def main(video_path, output_dir=None, generate_broll=True):
             adjusted_word["end"] = word["end"] - start_sec
             clip_words_adjusted.append(adjusted_word)
         
-        generate_subs_from_whisper_segments(clip_words_adjusted, ass_file)
+        generate_subs_from_whisper_segments(clip_words_adjusted, ass_file, style_seed=i+1)
         
         # Step 1: Create 9:16 cropped video WITHOUT captions first
         cropped_video = os.path.join(CLIPS_DIR, f"clip_{i+1}_cropped_no_captions.mp4")
         print(f"[7a] Creating 9:16 cropped video for clip {i+1}")
-        
-        # Just crop to 9:16 without captions
+
+        # Crop to 9:16 without captions, but center on the detected face (prevents half-face crops)
+        cap = cv2.VideoCapture(out_file)
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+
+        region = detect_speaker_face_region(out_file)
+
+        # Match ffmpeg's scale=2160:3840:force_original_aspect_ratio=increase with a conservative rounding.
+        target_w, target_h = 2160, 3840
+        if w > 0 and h > 0:
+            scale = max(target_w / w, target_h / h)
+        else:
+            scale = 1.0
+
+        # Use ceil so our predicted scaled size is never smaller than the target crop.
+        # (Using floor can under-shoot by 1px due to float rounding, causing FFmpeg crop failures.)
+        scaled_w = int(np.ceil(w * scale)) if w > 0 else target_w
+        scaled_h = int(np.ceil(h * scale)) if h > 0 else target_h
+        scaled_w = max(target_w, scaled_w)
+        scaled_h = max(target_h, scaled_h)
+
+        center_scaled = float(region["center_x"]) * scale
+        left_scaled = float(region["face_left_x"]) * scale if region.get("face_left_x") is not None else None
+        right_scaled = float(region["face_right_x"]) * scale if region.get("face_right_x") is not None else None
+
+        crop_x = choose_crop_x(
+            frame_width=scaled_w,
+            crop_width=target_w,
+            preferred_center_x=center_scaled,
+            face_left_x=left_scaled,
+            face_right_x=right_scaled,
+            margin_ratio=0.06,
+            min_margin_px=48,
+        )
+        crop_y = max(0, int((scaled_h - target_h) / 2))
+
         crop_cmd = [
             "ffmpeg", "-y", "-i", out_file,
-            "-vf", "scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,setsar=1:1",
+            "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}:{crop_x}:{crop_y},setsar=1:1",
             "-c:a", "copy",
             "-c:v", "libx264", "-preset", "medium", "-crf", "23",
             cropped_video
@@ -1818,7 +2109,7 @@ def main(video_path, output_dir=None, generate_broll=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Extract and process video clips')
     parser.add_argument('--video', type=str, help='Path to video file or YouTube URL')
-    parser.add_argument('--output_dir', type=str, default=None, help='Output directory for clips')
+    parser.add_argument('--output_dir', type=str, default=CLIPS_DIR, help='Output directory for clips')
     parser.add_argument('--nobroll', action='store_true', help='Disable B-roll generation')
     
     args = parser.parse_args()
