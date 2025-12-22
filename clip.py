@@ -29,6 +29,9 @@ import traceback
 import os
 import sys
 
+import os
+import sys
+
 def export_nvidia_libs():
     """
     Auto-exports NVIDIA library paths from the pip environment 
@@ -40,8 +43,19 @@ def export_nvidia_libs():
         try:
             # Dynamically import the library module
             lib_module = __import__(lib_name, fromlist=['lib'])
-            lib_dir = os.path.dirname(lib_module.__file__)
             
+            # 🛡️ ROBUST PATH DETECTION (Fixes TypeError)
+            lib_dir = None
+            if hasattr(lib_module, '__file__') and lib_module.__file__:
+                lib_dir = os.path.dirname(lib_module.__file__)
+            elif hasattr(lib_module, '__path__'):
+                # Fallback for namespace packages
+                lib_dir = list(lib_module.__path__)[0]
+            
+            if not lib_dir or not os.path.isdir(lib_dir):
+                print(f"⚠️ Warning: Could not determine valid path for '{lib_name}'")
+                continue
+
             # Add to LD_LIBRARY_PATH
             current_path = os.environ.get('LD_LIBRARY_PATH', '')
             if lib_dir not in current_path:
