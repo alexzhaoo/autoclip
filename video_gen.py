@@ -86,12 +86,33 @@ class Wan22LightX2VGenerator:
                 vae_offload=False,
             )
 
-        self.pipe.enable_lora(
+        # LightX2V's LoRA API has changed across versions. Try a couple of common
+        # spec formats to ensure the LoRAs are actually registered.
+        lora_specs_variants = [
+            [
+                {"lora_name": "high_noise_model", "lora_path": str(self.high_noise_lora_path), "strength": 1.0},
+                {"lora_name": "low_noise_model", "lora_path": str(self.low_noise_lora_path), "strength": 1.0},
+            ],
             [
                 {"name": "high_noise_model", "path": str(self.high_noise_lora_path), "strength": 1.0},
                 {"name": "low_noise_model", "path": str(self.low_noise_lora_path), "strength": 1.0},
-            ]
-        )
+            ],
+        ]
+
+        last_lora_err: Exception | None = None
+        for specs in lora_specs_variants:
+            try:
+                self.pipe.enable_lora(specs)
+                last_lora_err = None
+                break
+            except Exception as e:
+                last_lora_err = e
+
+        if last_lora_err is not None:
+            raise RuntimeError(
+                "Failed to register Wan2.2 distill LoRAs with LightX2V. "
+                f"Last error: {type(last_lora_err).__name__}: {last_lora_err}"
+            ) from last_lora_err
 
         if attn_mode == "flash_attn2":
             try:

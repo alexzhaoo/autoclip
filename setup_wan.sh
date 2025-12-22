@@ -52,9 +52,12 @@ if [ -f "${ROOT_DIR}/requirements.txt" ]; then
   python -m pip install -r "${ROOT_DIR}/requirements.txt"
 fi
 
-# IMPORTANT: 'hf' command requires a newer version. 
-# The [cli] extra is deprecated in newer versions; the CLI is now core.
-python -m pip install --upgrade "huggingface_hub>=0.27.0" hf_transfer
+# Keep huggingface_hub < 1.0 for compatibility with current transformers/tokenizers.
+# The `hf` CLI is shipped with huggingface_hub.
+python -m pip install --upgrade "huggingface_hub>=0.24.0,<1.0" hf_transfer
+
+# Newer diffusers PEFT loader expects `transformers.modeling_layers`.
+python -m pip install --upgrade "transformers>=4.52.0" "diffusers>=0.31.0"
 export HF_HUB_ENABLE_HF_TRANSFER=1
 
 # -------------------------
@@ -73,16 +76,29 @@ echo "[setup_wan] Downloading Base Model (Excluding massive noise files)..."
 # We exclude the 'high_noise_model' folder to prevent downloading the fine-tuned weights by accident
 hf download "${BASE_REPO_ID}" \
   --local-dir "${MODELS_DIR}/Wan2.2-T2V-A14B" \
+  --local-dir-use-symlinks False \
   --exclude "*high_noise_model*" "*low_noise_model*" "*.git*"
 
 echo "[setup_wan] Downloading Specific Distill LoRAs..."
 # We use --include to force download ONLY these files, ignoring the rest of the repo
 hf download "${DISTILL_LORA_REPO_ID}" \
   --include "${HIGH_NOISE_LORA}" \
-  --local-dir "${MODELS_DIR}/loras"
+  --local-dir "${MODELS_DIR}/loras" \
+  --local-dir-use-symlinks False
 
 hf download "${DISTILL_LORA_REPO_ID}" \
   --include "${LOW_NOISE_LORA}" \
-  --local-dir "${MODELS_DIR}/loras"
+  --local-dir "${MODELS_DIR}/loras" \
+  --local-dir-use-symlinks False
+
+# Verify expected files exist
+if [ ! -f "${MODELS_DIR}/loras/${HIGH_NOISE_LORA}" ]; then
+  echo "[setup_wan] ERROR: High-noise LoRA missing: ${MODELS_DIR}/loras/${HIGH_NOISE_LORA}" >&2
+  exit 1
+fi
+if [ ! -f "${MODELS_DIR}/loras/${LOW_NOISE_LORA}" ]; then
+  echo "[setup_wan] ERROR: Low-noise LoRA missing: ${MODELS_DIR}/loras/${LOW_NOISE_LORA}" >&2
+  exit 1
+fi
 
 echo "[setup_wan] Done. Ready for generation."

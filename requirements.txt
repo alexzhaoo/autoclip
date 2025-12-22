@@ -8,7 +8,9 @@ torch
 # Core dependencies
 opencv-python>=4.9.0.80
 diffusers>=0.31.0
-transformers>=4.49.0,<=4.51.3
+# Newer diffusers PEFT loader expects `transformers.modeling_layers`.
+# Keep this reasonably modern; avoid tight upper-bounds that break over time.
+transformers>=4.52.0
 tokenizers>=0.20.3
 accelerate>=1.1.1
 tqdm
@@ -38,8 +40,7 @@ elevenlabs>=0.2.0
 nltk>=3.8.0
 
 # AI/ML for B-roll generation
-transformers>=4.30.0
-accelerate>=0.20.0
+# (Already required above; keep here only for readability)
 pillow>=10.0.0
 diffusers[torch]>=0.18.0
 
