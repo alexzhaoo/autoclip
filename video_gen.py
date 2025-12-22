@@ -33,7 +33,7 @@ class Wan22LightX2VGenerator:
         low_noise_lora_filename: str = "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
         offload_model: bool = False,  # Changed default to False to keep on GPU
         config: Wan22DistillConfig = Wan22DistillConfig(),
-        attn_mode: str = "naive",
+        attn_mode: str = "flash_attn2",
     ):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is required for Wan2.2 generation")
@@ -107,7 +107,7 @@ class Wan22LightX2VGenerator:
             try:
                 import flash_attn  # noqa: F401
             except Exception:
-                attn_mode = "torch"
+                attn_mode = "sdpa"
 
         self.pipe.create_generator(
             attn_mode=attn_mode,
