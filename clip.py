@@ -179,6 +179,9 @@ def detect_cuda_availability():
 
 def transcribe(video_path):
     print(f"🎤 Starting transcription of: {os.path.basename(video_path)}")
+    import datetime
+    start_time = datetime.datetime.now()
+    print(f"   [LOG] Transcription started at: {start_time}")
     
     # Get video duration for progress estimation
     try:
@@ -200,9 +203,16 @@ def transcribe(video_path):
     
     # Transcribe with progress tracking
     print("   🔄 Running Whisper transcription...")
+    whisper_start = datetime.datetime.now()
+    print(f"   [LOG] Whisper model.transcribe() started at: {whisper_start}")
     segments, info = model.transcribe(video_path, word_timestamps=True)
+    whisper_end = datetime.datetime.now()
+    print(f"   [LOG] Whisper model.transcribe() finished at: {whisper_end}")
+    print(f"   [LOG] Whisper transcription duration: {whisper_end - whisper_start}")
     
     print(f"   Language detected: {info.language} (confidence: {info.language_probability:.2%})")
+    after_transcribe = datetime.datetime.now()
+    print(f"   [LOG] After transcription, time: {after_transcribe}, elapsed since start: {after_transcribe - start_time}")
     if duration:
         print(f"   Estimated processing time: {duration/60*0.1:.1f} minutes")
     
