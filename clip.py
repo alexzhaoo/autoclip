@@ -219,81 +219,132 @@ def detect_cuda_availability():
         return False
 
 def transcribe(video_path):
-    print(f"🎤 Starting transcription of: {os.path.basename(video_path)}")
-    import datetime
-    start_time = datetime.datetime.now()
-    print(f"   [LOG] Transcription started at: {start_time}")
+    print(f"\n🎤 --- TRANSCRIPTION START: {os.path.basename(video_path)} ---")
     
-    # Get video duration for progress estimation
+    import time
+    import gc
+    
+    # 1. Force cleanup to get accurate memory reading
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    start_wall_time = time.time()
+    
+    # 2. Get Video Info
+    duration_sec = 0
     try:
         result = subprocess.run([
             "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
             "-of", "csv=p=0", video_path
         ], capture_output=True, text=True)
-        duration = float(result.stdout.strip()) if result.returncode == 0 else None
-        if duration:
-            print(f"   Video duration: {duration/60:.1f} minutes")
+        duration_sec = float(result.stdout.strip()) if result.returncode == 0 else 0
+        print(f"   📹 Video Duration: {duration_sec/60:.2f} minutes")
     except Exception:
-        duration = None
-    
-    # Show initial GPU memory if CUDA is available
-    if torch.cuda.is_available():
-        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        allocated_gb = torch.cuda.memory_allocated() / 1024**3
-        print(f"   🎯 GPU Memory: {allocated_gb:.1f}GB / {gpu_memory_gb:.0f}GB allocated")
-    
-    # Transcribe with progress tracking
-    print("   🔄 Running Whisper transcription...")
-    whisper_start = datetime.datetime.now()
-    print(f"   [LOG] Whisper model.transcribe() started at: {whisper_start}")
-    segments, info = model.transcribe(video_path, word_timestamps=True)
-    whisper_end = datetime.datetime.now()
-    print(f"   [LOG] Whisper model.transcribe() finished at: {whisper_end}")
-    print(f"   [LOG] Whisper transcription duration: {whisper_end - whisper_start}")
-    
-    print(f"   Language detected: {info.language} (confidence: {info.language_probability:.2%})")
-    after_transcribe = datetime.datetime.now()
-    print(f"   [LOG] After transcription, time: {after_transcribe}, elapsed since start: {after_transcribe - start_time}")
-    if duration:
-        print(f"   Estimated processing time: {duration/60*0.1:.1f} minutes")
-    
-    transcript = ""
-    segments_list = []
-    
-    # Convert generator to list with progress bar
-    print("   📝 Processing transcript segments...")
-    segments = list(tqdm(segments, desc="   Processing segments", unit="seg"))
-    
-    # Show GPU memory after transcription if CUDA is available
-    if torch.cuda.is_available():
-        allocated_gb = torch.cuda.memory_allocated() / 1024**3
-        print(f"   📊 GPU Memory after transcription: {allocated_gb:.1f}GB allocated")
-    
-    for segment in tqdm(segments, desc="   Building transcript", unit="seg"):
-        segment_dict = {
-            "start": segment.start,
-            "end": segment.end,
-            "text": segment.text,
-            "words": [
-                {
-                    "start": word.start,
-                    "end": word.end,
-                    "word": word.word
-                } for word in segment.words
-            ] if segment.words else []
-        }
-        segments_list.append(segment_dict)
-        transcript += segment.text + " "
+        print("   ⚠️ Could not determine video duration")
 
+    # 3. Log Memory Before
+    if torch.cuda.is_available():
+        mem_before = torch.cuda.memory_allocated() / 1024**3
+        max_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"   💾 VRAM Before: {mem_before:.2f}GB / {max_mem:.2f}GB")
+    else:
+        print("   💾 Running on CPU (Expect high RAM usage)")
+
+    print("   🚀 Starting Model Inference (This is the heavy part)...")
+    inference_start = time.time()
+
+    # ---------------------------------------------------------
+    # ACTUAL TRANSCRIPTION
+    # ---------------------------------------------------------
+    try:
+        # Check if file exists
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video file missing: {video_path}")
+
+        segments_generator, info = model.transcribe(
+            video_path, 
+            word_timestamps=True,
+            beam_size=5  # Default is 5, explicit setting helps debug
+        )
+        
+        print(f"   🗣️  Detected Language: {info.language} ({info.language_probability:.2%})")
+        print(f"   ⏱️  Time to First Token: {time.time() - inference_start:.2f}s")
+        print("   📝 Processing segments...")
+        
+        segments_list = []
+        transcript_text = ""
+        
+        # We manually iterate to time the processing speed
+        seg_count = 0
+        
+        # Use tqdm for visual progress if we know duration
+        pbar = tqdm(total=duration_sec, unit="sec", desc="   Transcribing") if duration_sec > 0 else tqdm(desc="   Transcribing")
+        
+        for segment in segments_generator:
+            seg_count += 1
+            
+            # Update dictionary logic
+            segment_dict = {
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text,
+                "words": [
+                    {
+                        "start": word.start,
+                        "end": word.end,
+                        "word": word.word
+                    } for word in segment.words
+                ] if segment.words else []
+            }
+            segments_list.append(segment_dict)
+            transcript_text += segment.text + " "
+            
+            # Update progress bar
+            if duration_sec > 0:
+                pbar.update(segment.end - pbar.n)
+            else:
+                pbar.update(1)
+
+        pbar.close()
+
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR during transcription: {e}")
+        traceback.print_exc()
+        return "", []
+
+    # ---------------------------------------------------------
+    
+    inference_end = time.time()
+    total_time = inference_end - start_wall_time
+    inference_time = inference_end - inference_start
+    
+    # 4. Performance Metrics
+    print(f"\n   ✅ Transcription Complete")
+    print(f"   ⏱️  Total Time: {total_time:.2f}s")
+    print(f"   ⚡ Inference Time: {inference_time:.2f}s")
+    
+    if duration_sec > 0:
+        speed_factor = duration_sec / inference_time
+        print(f"   🚀 Speed Factor: {speed_factor:.2f}x real-time")
+        if speed_factor < 5.0 and torch.cuda.is_available():
+            print("   ⚠️  PERFORMANCE WARNING: Speed is low for GPU. Verify CTranslate2 is actually using CUDA.")
+
+    # 5. Log Memory After
+    if torch.cuda.is_available():
+        mem_after = torch.cuda.memory_allocated() / 1024**3
+        print(f"   💾 VRAM After: {mem_after:.2f}GB (Delta: {mem_after - mem_before:+.2f}GB)")
+
+    # Save outputs
     transcript_path = os.path.join(TRANSCRIPTS_DIR, "transcript.txt")
     with open(transcript_path, "w", encoding="utf-8") as f:
-        f.write(transcript.strip())
+        f.write(transcript_text.strip())
 
     segments_path = os.path.join(TRANSCRIPTS_DIR, "segments.json")
     with open(segments_path, "w", encoding="utf-8") as f:
         json.dump(segments_list, f, indent=2, ensure_ascii=False)
 
-    return transcript.strip(), segments_list
+    return transcript_text.strip(), segments_list
 
 
 
