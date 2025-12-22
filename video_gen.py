@@ -87,42 +87,21 @@ class Wan22LightX2VGenerator:
             )
 
         # LightX2V's LoRA API and expected LoRA names have changed across versions.
-        # Some builds expect LoRAs registered under specific names (e.g. "high_noise_model").
-        # To be resilient, we register a few aliases for each LoRA and try several
-        # common spec formats (strength vs scale, name/path vs lora_name/lora_path).
+        # For Wan2.2 distill runners, LightX2V requires explicit LoRA names.
+        # In particular, its Wan2.2 model code indexes lora_config["name"] directly.
+        # If we pass dicts without a "name" key (e.g. {"lora_name": ...}), it can crash
+        # later with KeyError("name") during model initialization.
         high_path = str(self.high_noise_lora_path)
         low_path = str(self.low_noise_lora_path)
 
-        lora_aliases: list[tuple[str, str]] = [
-            ("high_noise_model", high_path),
-            ("high_noise", high_path),
-            ("high_noise_lora", high_path),
-            ("low_noise_model", low_path),
-            ("low_noise", low_path),
-            ("low_noise_lora", low_path),
-        ]
-
-        lora_specs_variants = [
-            [{"lora_name": name, "lora_path": path, "strength": 1.0} for name, path in lora_aliases],
-            [{"lora_name": name, "lora_path": path, "scale": 1.0} for name, path in lora_aliases],
-            [{"name": name, "path": path, "strength": 1.0} for name, path in lora_aliases],
-            [{"name": name, "path": path, "scale": 1.0} for name, path in lora_aliases],
-        ]
-
-        last_lora_err: Exception | None = None
-        for specs in lora_specs_variants:
-            try:
-                self.pipe.enable_lora(specs)
-                last_lora_err = None
-                break
-            except Exception as e:
-                last_lora_err = e
-
-        if last_lora_err is not None:
-            raise RuntimeError(
-                "Failed to register Wan2.2 distill LoRAs with LightX2V. "
-                f"Last error: {type(last_lora_err).__name__}: {last_lora_err}"
-            ) from last_lora_err
+        # Use the official expected names.
+        # See LightX2V's example: examples/wan/wan_i2v_with_distill_loras.py
+        self.pipe.enable_lora(
+            [
+                {"name": "high_noise_model", "path": high_path, "strength": 1.0},
+                {"name": "low_noise_model", "path": low_path, "strength": 1.0},
+            ]
+        )
 
         if attn_mode == "flash_attn2":
             try:

@@ -8,6 +8,7 @@ import requests
 import tempfile
 import shutil
 from pathlib import Path
+import traceback
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from openai import OpenAI
@@ -555,7 +556,11 @@ class ProductionBRollPipeline:
                 print("🌟 Using LightX2V Wan2.2 T2V 4-step distill (Dual-LoRA) backend")
                 return Wan22LightX2VVideoGenerator()
             except Exception as e:
-                print(f"⚠️ LightX2V backend unavailable, falling back to legacy Wan2.2 generate.py: {e}")
+                tb = traceback.format_exc()
+                print(
+                    "⚠️ LightX2V backend unavailable, falling back to legacy Wan2.2 generate.py: "
+                    f"{type(e).__name__}: {e}\n{tb}"
+                )
 
                 # Only attempt legacy fallback if the Wan2.2 repo exists.
                 effective_wan22_path = wan22_path or os.getenv(
