@@ -1,6 +1,3 @@
-import torch
-from faster_whisper import WhisperModel
-
 import subprocess
 import json
 import os
@@ -29,7 +26,37 @@ from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 import argparse
 import traceback
+import os
+import sys
 
+def export_nvidia_libs():
+    """
+    Auto-exports NVIDIA library paths from the pip environment 
+    so CTranslate2/Faster-Whisper can find them.
+    """
+    libs_to_check = ['nvidia.cublas.lib', 'nvidia.cudnn.lib']
+    
+    for lib_name in libs_to_check:
+        try:
+            # Dynamically import the library module
+            lib_module = __import__(lib_name, fromlist=['lib'])
+            lib_dir = os.path.dirname(lib_module.__file__)
+            
+            # Add to LD_LIBRARY_PATH
+            current_path = os.environ.get('LD_LIBRARY_PATH', '')
+            if lib_dir not in current_path:
+                print(f"🔗 Adding {lib_name} to LD_LIBRARY_PATH: {lib_dir}")
+                os.environ['LD_LIBRARY_PATH'] = f"{lib_dir}:{current_path}"
+                
+        except ImportError:
+            print(f"⚠️ Warning: Could not find pip package '{lib_name}'. GPU acceleration might fail.")
+
+# RUN THIS FIRST
+export_nvidia_libs()
+
+# NOW import your heavy libraries
+import torch
+from faster_whisper import WhisperModel
 # NLTK data downloads with error handling for remote environments
 def ensure_nltk_data():
     """Ensure NLTK data is available, with fallbacks for remote environments"""

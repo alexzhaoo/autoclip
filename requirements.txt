@@ -4,7 +4,8 @@ torch
 # FlashAttention (install manually with build flags)
 # Run: pip install flash-attn==2.8.3 --no-build-isolation --use-pep517
 # flash-attn
-
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
 # Core dependencies
 opencv-python>=4.9.0.80
 diffusers>=0.31.0
