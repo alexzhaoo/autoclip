@@ -63,7 +63,12 @@ class Wan22LightX2VGenerator:
             from lightx2v import LightX2VPipeline
         except Exception as e:
             raise RuntimeError(
-                "Failed to import LightX2V. Ensure LightX2V is installed (pip install -v git+https://github.com/ModelTC/LightX2V.git)."
+                "Failed to import LightX2V "
+                f"({type(e).__name__}: {e}). "
+                "This usually means LightX2V wasn't installed successfully in the active environment, "
+                "or a build/runtime dependency is missing. "
+                "Re-run setup_wan.sh (it installs LightX2V into .venv) or install manually with: "
+                "pip install -v git+https://github.com/ModelTC/LightX2V.git"
             ) from e
 
         self.pipe = LightX2VPipeline(

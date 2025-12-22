@@ -62,7 +62,7 @@ lightx2v @ git+https://github.com/ModelTC/LightX2V.git
 
 # Hugging Face download tooling used by setup_wan.sh
 # Keep <1.0 for compatibility with transformers/tokenizers currently pinned above.
-huggingface_hub>=0.24.0,<1.0
+huggingface_hub<1.0
 hf_transfer
 
 # Common model file format dependency (often pulled transitively, but keep explicit)

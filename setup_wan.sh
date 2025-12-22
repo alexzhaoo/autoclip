@@ -21,7 +21,10 @@ mkdir -p "${MODELS_DIR}/loras"
 # -------------------------
 if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get -o DPkg::Lock::Timeout=300 update
-  sudo apt-get -o DPkg::Lock::Timeout=300 install -y git ffmpeg python3 python3-venv python3-pip
+  # Build deps are needed for some LightX2V components on fresh images.
+  sudo apt-get -o DPkg::Lock::Timeout=300 install -y \
+    git ffmpeg python3 python3-venv python3-pip \
+    build-essential python3-dev ninja-build
 fi
 
 # -------------------------
@@ -41,6 +44,9 @@ if [ ! -d "${LIGHTX2V_DIR}" ]; then
   git clone --depth 1 https://github.com/ModelTC/LightX2V.git "${LIGHTX2V_DIR}"
 fi
 python -m pip install -v "${LIGHTX2V_DIR}"
+
+# Smoke test: fail early if LightX2V didn't install correctly.
+python -c "from lightx2v import LightX2VPipeline; print('✅ LightX2V import OK')"
 
 if [ -f "${ROOT_DIR}/requirements.txt" ]; then
   python -m pip install -r "${ROOT_DIR}/requirements.txt"

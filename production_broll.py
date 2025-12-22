@@ -557,6 +557,23 @@ class ProductionBRollPipeline:
             except Exception as e:
                 print(f"⚠️ LightX2V backend unavailable, falling back to legacy Wan2.2 generate.py: {e}")
 
+                # Only attempt legacy fallback if the Wan2.2 repo exists.
+                effective_wan22_path = wan22_path or os.getenv(
+                    "WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2"
+                )
+                try:
+                    if not Path(effective_wan22_path).exists():
+                        raise FileNotFoundError(f"Wan2.2 directory not found: {effective_wan22_path}")
+                except Exception as path_err:
+                    raise RuntimeError(
+                        "B-roll generation backend initialization failed. "
+                        "LightX2V failed to initialize, and legacy Wan2.2 fallback is unavailable. "
+                        f"LightX2V error: {e}. "
+                        f"Legacy check error: {path_err}. "
+                        "Fix options: (1) rerun ./setup_wan.sh and ensure 'python -c \"from lightx2v import LightX2VPipeline\"' works, "
+                        "or (2) set WAN22_BACKEND=legacy and clone Wan2.2 at WAN22_PATH."
+                    )
+
         return Wan22VideoGenerator(wan22_path, model_type, aspect_ratio)
     
     def process_clip(self, clip_data: Dict) -> bool:
