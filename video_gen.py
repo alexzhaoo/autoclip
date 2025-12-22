@@ -31,9 +31,9 @@ class Wan22LightX2VGenerator:
         base_model_dirname: str = "Wan2.2-T2V-A14B",
         high_noise_lora_filename: str = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors",
         low_noise_lora_filename: str = "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
-        offload_model: bool = True,
+        offload_model: bool = False,  # Changed default to False to keep on GPU
         config: Wan22DistillConfig = Wan22DistillConfig(),
-        attn_mode: str = "flash_attn2",
+        attn_mode: str = "sdpa",
     ):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is required for Wan2.2 generation")
