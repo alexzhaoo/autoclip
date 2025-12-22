@@ -79,12 +79,15 @@ if hf download --help 2>&1 | grep -q "local-dir-use-symlinks"; then
   HF_LOCAL_DIR_ARGS+=(--local-dir-use-symlinks False)
 fi
 
-echo "[setup_wan] Downloading Base Model (Excluding massive noise files)..."
-# We exclude the 'high_noise_model' folder to prevent downloading the fine-tuned weights by accident
+echo "[setup_wan] Downloading Base Model (Wan2.2 official, includes high/low-noise submodels)..."
+# NOTE: LightX2V's Wan2.2 runners expect the model directory structure to contain
+# `high_noise_model/` and `low_noise_model/` (or `distill_models/...`).
+# Do NOT exclude these directories, or LightX2V will fail with:
+#   FileNotFoundError: High Noise Model does not find
 hf download "${BASE_REPO_ID}" \
   --local-dir "${MODELS_DIR}/Wan2.2-T2V-A14B" \
   "${HF_LOCAL_DIR_ARGS[@]}" \
-  --exclude "*high_noise_model*" "*low_noise_model*" "*.git*"
+  --exclude "*.git*"
 
 echo "[setup_wan] Downloading Specific Distill LoRAs..."
 # We use --include to force download ONLY these files, ignoring the rest of the repo
@@ -109,3 +112,32 @@ if [ ! -f "${MODELS_DIR}/loras/${LOW_NOISE_LORA}" ]; then
 fi
 
 echo "[setup_wan] Done. Ready for generation."
+
+# -------------------------
+# 5. Optional speedups (non-fatal)
+# -------------------------
+# These are optional CUDA attention backends. They can significantly speed up inference,
+# but are often the most fragile part of the install (Torch/CUDA/driver/build mismatches).
+# We attempt them at the end and DO NOT fail the setup if they can't be installed.
+echo "[setup_wan] Optional: attempting to install attention speedups (non-fatal)..."
+(
+  set +e
+
+  python -m pip install -U pip setuptools wheel
+
+  echo "[setup_wan] Optional: installing flash-attn (may compile; can take a while)..."
+  python -m pip install -U flash-attn --no-build-isolation
+  if [ $? -ne 0 ]; then
+    echo "[setup_wan] WARN: flash-attn install failed (continuing)." >&2
+  fi
+
+  echo "[setup_wan] Optional: installing sageattention (may compile; can take a while)..."
+  python -m pip install -U sageattention --no-build-isolation
+  if [ $? -ne 0 ]; then
+    echo "[setup_wan] WARN: sageattention install failed (continuing)." >&2
+  fi
+
+  # Best-effort sanity check
+  python -c "from lightx2v import LightX2VPipeline; print('[setup_wan] LightX2V import OK after optional installs')" >/dev/null 2>&1
+  exit 0
+)

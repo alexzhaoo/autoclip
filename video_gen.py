@@ -86,17 +86,27 @@ class Wan22LightX2VGenerator:
                 vae_offload=False,
             )
 
-        # LightX2V's LoRA API has changed across versions. Try a couple of common
-        # spec formats to ensure the LoRAs are actually registered.
+        # LightX2V's LoRA API and expected LoRA names have changed across versions.
+        # Some builds expect LoRAs registered under specific names (e.g. "high_noise_model").
+        # To be resilient, we register a few aliases for each LoRA and try several
+        # common spec formats (strength vs scale, name/path vs lora_name/lora_path).
+        high_path = str(self.high_noise_lora_path)
+        low_path = str(self.low_noise_lora_path)
+
+        lora_aliases: list[tuple[str, str]] = [
+            ("high_noise_model", high_path),
+            ("high_noise", high_path),
+            ("high_noise_lora", high_path),
+            ("low_noise_model", low_path),
+            ("low_noise", low_path),
+            ("low_noise_lora", low_path),
+        ]
+
         lora_specs_variants = [
-            [
-                {"lora_name": "high_noise_model", "lora_path": str(self.high_noise_lora_path), "strength": 1.0},
-                {"lora_name": "low_noise_model", "lora_path": str(self.low_noise_lora_path), "strength": 1.0},
-            ],
-            [
-                {"name": "high_noise_model", "path": str(self.high_noise_lora_path), "strength": 1.0},
-                {"name": "low_noise_model", "path": str(self.low_noise_lora_path), "strength": 1.0},
-            ],
+            [{"lora_name": name, "lora_path": path, "strength": 1.0} for name, path in lora_aliases],
+            [{"lora_name": name, "lora_path": path, "scale": 1.0} for name, path in lora_aliases],
+            [{"name": name, "path": path, "strength": 1.0} for name, path in lora_aliases],
+            [{"name": name, "path": path, "scale": 1.0} for name, path in lora_aliases],
         ]
 
         last_lora_err: Exception | None = None
