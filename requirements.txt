@@ -4,8 +4,11 @@ torch
 # FlashAttention (install manually with build flags)
 # Run: pip install flash-attn==2.8.3 --no-build-isolation --use-pep517
 # flash-attn
-nvidia-cublas-cu12
-nvidia-cudnn-cu12
+# Keep NVIDIA pip wheels aligned with the installed PyTorch CUDA build.
+# For torch 2.8.0+cu128, these are the expected versions.
+nvidia-cublas-cu12==12.8.4.1; platform_system=="Linux" and platform_machine=="x86_64"
+nvidia-cuda-runtime-cu12==12.8.90; platform_system=="Linux" and platform_machine=="x86_64"
+nvidia-cudnn-cu12==9.10.2.21; platform_system=="Linux" and platform_machine=="x86_64"
 # Core dependencies
 opencv-python>=4.9.0.80
 diffusers>=0.31.0
@@ -26,7 +29,8 @@ python-dotenv>=1.0.0
 yt-dlp>=2023.1.0
 
 # Video processing
-mediapipe>=0.10.0
+# mediapipe wheels are typically not available for Python 3.12
+mediapipe>=0.10.0; python_version < "3.12"
 moviepy>=1.0.3
 pysubs2>=1.6.0
 pysrt>=1.1.2
@@ -54,7 +58,8 @@ vastai-sdk>=0.1.0
 # Additional utilities
 pathlib2>=2.3.0
 dataclasses>=0.6; python_version<"3.7"
-decord
+# decord wheels are typically not available for Python 3.12
+decord; python_version < "3.12"
 librosa
 peft
 
