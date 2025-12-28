@@ -163,7 +163,7 @@ class ProductionBRollAnalyzer:
             Suggest clear, engaging visuals with DYNAMIC MOVEMENT that reflect the transcript's ideas, themes, or emotions.
             IMPORTANT: Use the FULL CONTEXT to understand the meaning of split sentences. Do not generate clips for isolated fragments.
             ALWAYS specify motion: camera movement (pan, tilt, zoom, dolly, tracking) AND/OR subject movement (flowing, rotating, walking, falling, rising, transforming).
-            Ensure Symmetrical Composition where natural.
+            Always inbclude the phrase "Symmetrical Composition" at the end of each VISUAL_PROMPT.
 
             Use diverse visual categories WITH MOTION:
             - Lifestyle & work: people walking, gesturing, objects being manipulated
@@ -196,7 +196,7 @@ class ProductionBRollAnalyzer:
         
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4.1-2025-04-14",
+                model="gpt-5.2-2025-12-11",
                 messages=[
                     {
                         "role": "system", 

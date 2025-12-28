@@ -507,8 +507,7 @@ def extract_clips(transcript, var ,max_clips=2):
 
 
     response = client.chat.completions.create(
-        model="gpt-4.1-2025-04-14",
-        temperature=0.5,
+        model="gpt-5.2-2025-12-11",
         messages=[ 
             {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": prompt}
@@ -1468,194 +1467,6 @@ def detect_speaker_face_region(
     return {"center_x": center_x, "face_left_x": face_left_x, "face_right_x": face_right_x, "frame_width": frame_width}
 
 
-def detect_two_person_face_regions(
-    video_path,
-    *,
-    num_samples: int = 16,
-    min_detection_confidence: float = 0.6,
-    min_total_detections: int = 10,
-):
-    """Detect whether the clip contains two stable face clusters (e.g., two people across a table).
-
-    Returns:
-        None if not confident.
-        Otherwise a dict:
-          - left:  {center_x, face_left_x, face_right_x}
-          - right: {center_x, face_left_x, face_right_x}
-          - frame_width
-          - debug: {counts, separation_px}
-
-    Notes:
-        This is a heuristic. It does not identify the active speaker; it only decides
-        whether showing both people via split-screen is safer than picking one.
-    """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return None
-
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    if frame_width <= 0 or frame_height <= 0:
-        cap.release()
-        return None
-    if frame_count <= 0:
-        frame_count = 1
-
-    def _make_sample_indices(n: int):
-        if n < 1:
-            n = 1
-        start_idx = int(frame_count * 0.05)
-        end_idx = max(start_idx, int(frame_count * 0.95) - 1)
-        if end_idx <= start_idx:
-            return [0]
-        indices = np.linspace(start_idx, end_idx, num=n)
-        indices = [int(round(x)) for x in indices]
-        return list(dict.fromkeys(indices))
-
-    def _extract_bboxes(detections):
-        out = []
-        for d in detections:
-            score = float(d.score[0]) if getattr(d, "score", None) else 0.0
-            box = d.location_data.relative_bounding_box
-            # Convert relative bbox to absolute pixels; clamp.
-            left = max(0.0, float(box.xmin) * frame_width)
-            right = min(float(frame_width), float(box.xmin + box.width) * frame_width)
-            if right <= left:
-                continue
-            area = float(max(0.0, box.width) * max(0.0, box.height))
-            quality = score * area
-            out.append((quality, left, right, score, area))
-        out.sort(key=lambda t: t[0], reverse=True)
-        return out
-
-    def _kmeans_1d_two_clusters(values: np.ndarray, iters: int = 8):
-        c1 = float(np.percentile(values, 25))
-        c2 = float(np.percentile(values, 75))
-        if c1 == c2:
-            return np.zeros(values.shape[0], dtype=int)
-        for _ in range(iters):
-            d1 = np.abs(values - c1)
-            d2 = np.abs(values - c2)
-            labels = (d2 < d1).astype(int)
-            if np.any(labels == 0):
-                c1 = float(np.mean(values[labels == 0]))
-            if np.any(labels == 1):
-                c2 = float(np.mean(values[labels == 1]))
-        return labels
-
-    mp_face = mp.solutions.face_detection
-    conf_lo = max(0.35, min_detection_confidence - 0.2)
-    detection_passes = [
-        (1, min_detection_confidence),
-        (0, min_detection_confidence),
-        (1, conf_lo),
-        (0, conf_lo),
-    ]
-
-    centers: list[float] = []
-    lefts: list[float] = []
-    rights: list[float] = []
-    scores: list[float] = []
-    areas: list[float] = []
-
-    sample_sizes = [num_samples, max(num_samples, 24)]
-    sample_sizes = list(dict.fromkeys([max(1, int(s)) for s in sample_sizes]))
-
-    for sample_n in sample_sizes:
-        sample_indices = _make_sample_indices(sample_n)
-        for model_selection, conf in detection_passes:
-            detector = mp_face.FaceDetection(model_selection=model_selection, min_detection_confidence=conf)
-            for idx in sample_indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if not ret:
-                    continue
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                detection_result = detector.process(rgb)
-                detections = getattr(detection_result, "detections", None)
-                if not detections:
-                    continue
-                bboxes = _extract_bboxes(detections)
-                if not bboxes:
-                    continue
-
-                # Keep up to 2 best detections per sampled frame.
-                for quality, left, right, score, area in bboxes[:2]:
-                    center = (left + right) / 2.0
-                    centers.append(center)
-                    lefts.append(left)
-                    rights.append(right)
-                    scores.append(score)
-                    areas.append(area)
-
-            if len(centers) >= min_total_detections:
-                break
-        if len(centers) >= min_total_detections:
-            break
-
-    cap.release()
-
-    if len(centers) < min_total_detections:
-        return None
-
-    centers_np = np.asarray(centers, dtype=float)
-    lefts_np = np.asarray(lefts, dtype=float)
-    rights_np = np.asarray(rights, dtype=float)
-    scores_np = np.asarray(scores, dtype=float)
-    areas_np = np.asarray(areas, dtype=float)
-
-    spread = float(np.percentile(centers_np, 90) - np.percentile(centers_np, 10))
-    if spread < (frame_width * 0.35):
-        return None
-
-    labels = _kmeans_1d_two_clusters(centers_np)
-    mask0 = labels == 0
-    mask1 = labels == 1
-    c0 = int(np.sum(mask0))
-    c1 = int(np.sum(mask1))
-    if min(c0, c1) < 4:
-        return None
-
-    # Ensure both clusters are meaningfully present.
-    total = c0 + c1
-    if (min(c0, c1) / max(1, total)) < 0.25:
-        return None
-
-    mean0 = float(np.mean(centers_np[mask0]))
-    mean1 = float(np.mean(centers_np[mask1]))
-    separation = abs(mean0 - mean1)
-    if separation < (frame_width * 0.30):
-        return None
-
-    # Pick left/right cluster by mean center.
-    left_mask = mask0 if mean0 <= mean1 else mask1
-    right_mask = mask1 if left_mask is mask0 else mask0
-
-    def _region_from_mask(mask: np.ndarray):
-        cx = float(np.median(centers_np[mask]))
-        lx = float(np.percentile(lefts_np[mask], 25))
-        rx = float(np.percentile(rights_np[mask], 75))
-        # Minor tie-break: if a cluster is extremely low quality, reject.
-        quality = float(np.mean(scores_np[mask] * areas_np[mask]))
-        return {"center_x": cx, "face_left_x": lx, "face_right_x": rx, "quality": quality}
-
-    left_region = _region_from_mask(left_mask)
-    right_region = _region_from_mask(right_mask)
-
-    # Require both clusters to have non-trivial quality.
-    if min(left_region["quality"], right_region["quality"]) <= 0.0:
-        return None
-
-    return {
-        "left": {k: left_region[k] for k in ("center_x", "face_left_x", "face_right_x")},
-        "right": {k: right_region[k] for k in ("center_x", "face_left_x", "face_right_x")},
-        "frame_width": frame_width,
-        "debug": {"counts": (c0, c1), "separation_px": separation},
-    }
-
-
 
 
 import os, glob, yt_dlp
@@ -2350,9 +2161,7 @@ def main(video_path, output_dir=None, generate_broll=True):
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
 
-        enable_two_person_splitscreen = os.getenv("SPLITSCREEN_TWO_PERSON", "true").lower() == "true"
-        two_person = detect_two_person_face_regions(out_file) if enable_two_person_splitscreen else None
-        region = None if two_person else detect_speaker_face_region(out_file)
+        region = detect_speaker_face_region(out_file)
 
         # Match ffmpeg's scale=2160:3840:force_original_aspect_ratio=increase with a conservative rounding.
         target_w, target_h = 2160, 3840
@@ -2370,83 +2179,27 @@ def main(video_path, output_dir=None, generate_broll=True):
 
         crop_y = max(0, int((scaled_h - target_h) / 2))
 
-        if two_person:
-            # Split-screen: show both detected faces side-by-side.
-            left_r = two_person["left"]
-            right_r = two_person["right"]
-            half_w = int(target_w / 2)
+        center_scaled = float(region["center_x"]) * scale
+        left_scaled = float(region["face_left_x"]) * scale if region.get("face_left_x") is not None else None
+        right_scaled = float(region["face_right_x"]) * scale if region.get("face_right_x") is not None else None
 
-            left_center_scaled = float(left_r["center_x"]) * scale
-            left_left_scaled = float(left_r["face_left_x"]) * scale if left_r.get("face_left_x") is not None else None
-            left_right_scaled = float(left_r["face_right_x"]) * scale if left_r.get("face_right_x") is not None else None
+        crop_x = choose_crop_x(
+            frame_width=scaled_w,
+            crop_width=target_w,
+            preferred_center_x=center_scaled,
+            face_left_x=left_scaled,
+            face_right_x=right_scaled,
+            margin_ratio=0.06,
+            min_margin_px=48,
+        )
 
-            right_center_scaled = float(right_r["center_x"]) * scale
-            right_left_scaled = float(right_r["face_left_x"]) * scale if right_r.get("face_left_x") is not None else None
-            right_right_scaled = float(right_r["face_right_x"]) * scale if right_r.get("face_right_x") is not None else None
-
-            crop_x_left = choose_crop_x(
-                frame_width=scaled_w,
-                crop_width=half_w,
-                preferred_center_x=left_center_scaled,
-                face_left_x=left_left_scaled,
-                face_right_x=left_right_scaled,
-                margin_ratio=0.06,
-                min_margin_px=48,
-            )
-            crop_x_right = choose_crop_x(
-                frame_width=scaled_w,
-                crop_width=half_w,
-                preferred_center_x=right_center_scaled,
-                face_left_x=right_left_scaled,
-                face_right_x=right_right_scaled,
-                margin_ratio=0.06,
-                min_margin_px=48,
-            )
-
-            print(
-                f"  👥 Two-person wide shot detected → split-screen (counts={two_person['debug']['counts']}, sep={int(two_person['debug']['separation_px'])}px)"
-            )
-
-            # Use filter_complex for split/hstack.
-            # Clamp crop x to valid range using iw/ow to avoid occasional scale rounding edge cases.
-            split_vf = (
-                f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,split=2[v0][v1];"
-                f"[v0]crop={half_w}:{target_h}:x='min(max({crop_x_left},0),iw-ow)':y={crop_y}[l];"
-                f"[v1]crop={half_w}:{target_h}:x='min(max({crop_x_right},0),iw-ow)':y={crop_y}[r];"
-                f"[l][r]hstack=inputs=2,setsar=1:1[v]"
-            )
-
-            crop_cmd = [
-                "ffmpeg", "-y", "-i", out_file,
-                "-filter_complex", split_vf,
-                "-map", "[v]",
-                "-map", "0:a?",
-                "-c:a", "copy",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-                cropped_video,
-            ]
-        else:
-            center_scaled = float(region["center_x"]) * scale
-            left_scaled = float(region["face_left_x"]) * scale if region.get("face_left_x") is not None else None
-            right_scaled = float(region["face_right_x"]) * scale if region.get("face_right_x") is not None else None
-
-            crop_x = choose_crop_x(
-                frame_width=scaled_w,
-                crop_width=target_w,
-                preferred_center_x=center_scaled,
-                face_left_x=left_scaled,
-                face_right_x=right_scaled,
-                margin_ratio=0.06,
-                min_margin_px=48,
-            )
-
-            crop_cmd = [
-                "ffmpeg", "-y", "-i", out_file,
-                "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}:{crop_x}:{crop_y},setsar=1:1",
-                "-c:a", "copy",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-                cropped_video
-            ]
+        crop_cmd = [
+            "ffmpeg", "-y", "-i", out_file,
+            "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}:{crop_x}:{crop_y},setsar=1:1",
+            "-c:a", "copy",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            cropped_video
+        ]
         
         result = subprocess.run(crop_cmd, capture_output=True, text=True)
         if result.returncode != 0:
