@@ -30,7 +30,7 @@ yt-dlp>=2023.1.0
 
 # Video processing
 # mediapipe wheels are typically not available for Python 3.12
-mediapipe>=0.10.0; python_version < "3.12"
+mediapipe>=0.10.0
 moviepy>=1.0.3
 pysubs2>=1.6.0
 pysrt>=1.1.2
