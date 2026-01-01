@@ -52,6 +52,9 @@ if [ -f "${ROOT_DIR}/requirements.txt" ]; then
   python -m pip install -r "${ROOT_DIR}/requirements.txt"
 fi
 
+# MediaPipe is used by some post-processing/vision steps.
+python -m pip install --upgrade mediapipe
+
 # Keep huggingface_hub < 1.0 for compatibility with current transformers/tokenizers.
 # The `hf` CLI is shipped with huggingface_hub.
 python -m pip install --upgrade "huggingface_hub>=0.24.0,<1.0" hf_transfer
