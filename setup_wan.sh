@@ -97,12 +97,12 @@ echo "[setup_wan] Downloading Specific Distill LoRAs..."
 hf download "${DISTILL_LORA_REPO_ID}" \
   --local-dir "${MODELS_DIR}/loras" \
   "${HF_LOCAL_DIR_ARGS[@]}" \
-  "${HIGH_NOISE_LORA}"
+  --include "${HIGH_NOISE_LORA}"
 
 hf download "${DISTILL_LORA_REPO_ID}" \
   --local-dir "${MODELS_DIR}/loras" \
   "${HF_LOCAL_DIR_ARGS[@]}" \
-  "${LOW_NOISE_LORA}"
+  --include "${LOW_NOISE_LORA}"
 
 # Verify expected files exist
 if [ ! -f "${MODELS_DIR}/loras/${HIGH_NOISE_LORA}" ]; then
