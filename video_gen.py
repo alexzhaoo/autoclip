@@ -12,8 +12,8 @@ import torch
 class Wan22DistillConfig:
     num_inference_steps: int = 4
     sample_guide_scale: tuple[float, float] = (4.0, 3.0)
-    width: int = 832
-    height: int = 480
+    width: int = 1280
+    height: int = 720
     num_frames: int = 81
     sample_shift: float = 5.0
     boundary_step_index: int = 2
@@ -59,6 +59,40 @@ class Wan22LightX2VGenerator:
 
         try:
             from lightx2v import LightX2VPipeline
+            # Monkey-patch MultiDistillModelStruct to support dynamic guidance scale
+            from lightx2v.models.runners.wan.wan_distill_runner import MultiDistillModelStruct
+            from loguru import logger
+
+            def fixed_get_current_model_index(self):
+                if self.scheduler.step_index < self.boundary_step_index:
+                    logger.info(f"using - HIGH - noise model at step_index {self.scheduler.step_index + 1}")
+                    # FIX: Apply the first guidance scale value
+                    if isinstance(self.config.get("sample_guide_scale"), (list, tuple)):
+                        self.scheduler.sample_guide_scale = self.config["sample_guide_scale"][0]
+                    
+                    if self.config.get("cpu_offload", False) and self.config.get("offload_granularity", "block") == "model":
+                        if self.cur_model_index == -1:
+                            self.to_cuda(model_index=0)
+                        elif self.cur_model_index == 1:  # 1 -> 0
+                            self.offload_cpu(model_index=1)
+                            self.to_cuda(model_index=0)
+                    self.cur_model_index = 0
+                else:
+                    logger.info(f"using - LOW - noise model at step_index {self.scheduler.step_index + 1}")
+                    # FIX: Apply the second guidance scale value
+                    if isinstance(self.config.get("sample_guide_scale"), (list, tuple)):
+                        self.scheduler.sample_guide_scale = self.config["sample_guide_scale"][1]
+
+                    if self.config.get("cpu_offload", False) and self.config.get("offload_granularity", "block") == "model":
+                        if self.cur_model_index == -1:
+                            self.to_cuda(model_index=1)
+                        elif self.cur_model_index == 0:  # 0 -> 1
+                            self.offload_cpu(model_index=0)
+                            self.to_cuda(model_index=1)
+                    self.cur_model_index = 1
+
+            MultiDistillModelStruct.get_current_model_index = fixed_get_current_model_index
+
         except Exception as e:
             raise RuntimeError(
                 "Failed to import LightX2V "
@@ -113,7 +147,7 @@ class Wan22LightX2VGenerator:
             height=config.height,
             width=config.width,
             num_frames=config.num_frames,
-            guidance_scale=config.sample_guide_scale[0],
+            guidance_scale=list(config.sample_guide_scale),
             sample_shift=config.sample_shift,
             boundary_step_index=config.boundary_step_index,
             denoising_step_list=list(config.denoising_step_list),
@@ -388,7 +422,7 @@ class Wan22LightX2VGenerator:
                         save_result_path=str(output_path),
                     )
             except Exception:
-                passg
+                pass
 
             if output_path.exists():
                 # If we successfully hijacked imageio inside the backend, avoid double-encoding.
