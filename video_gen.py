@@ -117,7 +117,6 @@ class Wan22LightX2VGenerator:
             sample_shift=config.sample_shift,
             boundary_step_index=config.boundary_step_index,
             denoising_step_list=list(config.denoising_step_list),
-            text_len=config.text_len,
         )
 
         self.config = config
