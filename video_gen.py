@@ -33,7 +33,7 @@ class Wan22LightX2VGenerator:
         low_noise_lora_filename: str = "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
         offload_model: bool = False,  # Changed default to False to keep on GPU
         config: Wan22DistillConfig = Wan22DistillConfig(),
-        attn_mode: str = "flash_attn2",
+        attn_mode: str = "flash_attn3",
     ):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is required for Wan2.2 generation")
@@ -127,6 +127,8 @@ class Wan22LightX2VGenerator:
         if not prompt or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
 
+        import imageio  # Importing here to ensure it's available, move to top if preferred
+
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -135,12 +137,29 @@ class Wan22LightX2VGenerator:
             seed = random.randint(0, 2**31 - 1)
 
         start = time.time()
-        self.pipe.generate(
+        
+        # 1. Capture frames instead of letting the pipe save them
+        video_frames = self.pipe.generate(
             seed=seed,
             prompt=enhanced_prompt,
             negative_prompt="",
-            save_result_path=str(output_path),
+            save_result_path=None,  # Critical: Prevents library from using default low-quality saver
         )
+        
+        # 2. Manually save with High Quality settings (CRF 18)
+        imageio.mimsave(
+            str(output_path),
+            video_frames,
+            fps=24,  # Standard cinematic framerate
+            plugin='ffmpeg',
+            ffmpeg_params=[
+                '-crf', '18',          # Visually lossless quality (lower is better)
+                '-preset', 'slow',     # Better compression efficiency
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p'  # Ensures compatibility
+            ]
+        )
+        
         _ = time.time() - start
 
         if not output_path.exists():
