@@ -11,13 +11,14 @@ import torch
 @dataclass(frozen=True)
 class Wan22DistillConfig:
     num_inference_steps: int = 4
-    guidance_scale: float = 1.0
-    width: int = 1280
-    height: int = 720
+    sample_guide_scale: tuple[float, float] = (4.0, 3.0)
+    width: int = 832
+    height: int = 480
     num_frames: int = 81
     sample_shift: float = 5.0
     boundary_step_index: int = 2
     denoising_step_list: tuple[int, int, int, int] = (1000, 750, 500, 250)
+    text_len: int = 512
 
 
 class Wan22LightX2VGenerator:
@@ -40,9 +41,6 @@ class Wan22LightX2VGenerator:
 
         if config.num_inference_steps != 4:
             raise ValueError("Wan2.2 4-step distilled LoRAs require num_inference_steps=4")
-
-        if float(config.guidance_scale) != 1.0:
-            raise ValueError("Wan2.2 distilled models require guidance_scale=1.0")
 
         os.environ.setdefault("DTYPE", "BF16")
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -115,10 +113,11 @@ class Wan22LightX2VGenerator:
             height=config.height,
             width=config.width,
             num_frames=config.num_frames,
-            guidance_scale=config.guidance_scale,
+            sample_guide_scale=list(config.sample_guide_scale),
             sample_shift=config.sample_shift,
             boundary_step_index=config.boundary_step_index,
             denoising_step_list=list(config.denoising_step_list),
+            text_len=config.text_len,
         )
 
         self.config = config
@@ -390,7 +389,7 @@ class Wan22LightX2VGenerator:
                         save_result_path=str(output_path),
                     )
             except Exception:
-                pass
+                passg
 
             if output_path.exists():
                 # If we successfully hijacked imageio inside the backend, avoid double-encoding.
