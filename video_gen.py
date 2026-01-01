@@ -216,7 +216,10 @@ class Wan22LightX2VGenerator:
                 imageio.mimsave = original  # type: ignore[assignment]
         
         def _reencode_mp4(input_path: Path, output_path: Path) -> None:
-            tmp_out = output_path.with_suffix(output_path.suffix + ".reencode.tmp")
+            # ffmpeg infers container format from the output extension.
+            # Keep a real .mp4 extension for the temp file, otherwise it can fail with:
+            # "Unable to choose an output format... use a standard extension".
+            tmp_out = output_path.with_name(output_path.stem + ".reencode.tmp.mp4")
             cmd = [
                 "ffmpeg",
                 "-y",
