@@ -127,7 +127,8 @@ class Wan22LightX2VGenerator:
         if not prompt or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
 
-        import imageio  # Importing here to ensure it's available, move to top if preferred
+        import imageio
+        import numpy as np
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,25 +139,51 @@ class Wan22LightX2VGenerator:
 
         start = time.time()
         
-        # 1. Capture frames instead of letting the pipe save them
+        # 1. Generate frames (returns Tensors)
         video_frames = self.pipe.generate(
             seed=seed,
             prompt=enhanced_prompt,
             negative_prompt="",
-            save_result_path=None,  # Critical: Prevents library from using default low-quality saver
+            save_result_path=None, 
         )
+
+        # 2. Conversion Logic: Handle Tensor -> Numpy List
+        # If output is a single 4D Tensor [F, C, H, W] or [F, H, W, C]
+        if isinstance(video_frames, torch.Tensor):
+            video_frames = video_frames.detach().cpu()
+            # If channels are first [F, C, H, W], permute to [F, H, W, C]
+            if video_frames.ndim == 4 and video_frames.shape[1] == 3:
+                 video_frames = video_frames.permute(0, 2, 3, 1)
+            
+            # Ensure 0-255 range and uint8 type
+            if video_frames.dtype == torch.float32 or video_frames.dtype == torch.float16:
+                video_frames = (video_frames * 255).clamp(0, 255).to(torch.uint8)
+            
+            video_frames = video_frames.numpy()
         
-        # 2. Manually save with High Quality settings (CRF 18)
+        # If output is a list of Tensors
+        elif isinstance(video_frames, list) and len(video_frames) > 0 and isinstance(video_frames[0], torch.Tensor):
+            processed_frames = []
+            for frame in video_frames:
+                frame = frame.detach().cpu()
+                if frame.ndim == 3 and frame.shape[0] == 3: # C, H, W -> H, W, C
+                    frame = frame.permute(1, 2, 0)
+                if frame.dtype == torch.float32 or frame.dtype == torch.float16:
+                     frame = (frame * 255).clamp(0, 255).to(torch.uint8)
+                processed_frames.append(frame.numpy())
+            video_frames = processed_frames
+
+        # 3. Manually save with High Quality settings
         imageio.mimsave(
             str(output_path),
             video_frames,
-            fps=24,  # Standard cinematic framerate
+            fps=24,
             plugin='ffmpeg',
             ffmpeg_params=[
-                '-crf', '18',          # Visually lossless quality (lower is better)
-                '-preset', 'slow',     # Better compression efficiency
+                '-crf', '18',          
+                '-preset', 'slow',    
                 '-c:v', 'libx264',
-                '-pix_fmt', 'yuv420p'  # Ensures compatibility
+                '-pix_fmt', 'yuv420p' 
             ]
         )
         
