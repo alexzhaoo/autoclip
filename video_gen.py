@@ -113,7 +113,7 @@ class Wan22LightX2VGenerator:
             height=config.height,
             width=config.width,
             num_frames=config.num_frames,
-            sample_guide_scale=list(config.sample_guide_scale),
+            guidance_scale=list(config.sample_guide_scale),
             sample_shift=config.sample_shift,
             boundary_step_index=config.boundary_step_index,
             denoising_step_list=list(config.denoising_step_list),
