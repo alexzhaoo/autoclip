@@ -11,7 +11,7 @@ import torch
 @dataclass(frozen=True)
 class Wan22DistillConfig:
     num_inference_steps: int = 4
-    sample_guide_scale: tuple[float, float] = (4.0, 3.0)
+    sample_guide_scale: tuple[float, float] = (1.0, 1.0)
     width: int = 1280
     height: int = 720
     num_frames: int = 81
