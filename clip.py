@@ -2197,7 +2197,7 @@ def main(video_path, output_dir=None, generate_broll=True):
             "ffmpeg", "-y", "-i", out_file,
             "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}:{crop_x}:{crop_y},setsar=1:1",
             "-c:a", "copy",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
             cropped_video
         ]
         

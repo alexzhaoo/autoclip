@@ -133,11 +133,7 @@ echo "[setup_wan] Done. Ready for generation."
     echo "[setup_wan] WARN: flash-attn install failed (continuing)." >&2
   fi
 
-  echo "[setup_wan] Optional: installing sageattention (may compile; can take a while)..."
-  python -m pip install -U sageattention --no-build-isolation
-  if [ $? -ne 0 ]; then
-    echo "[setup_wan] WARN: sageattention install failed (continuing)." >&2
-  fi
+
 
   # Best-effort sanity check
   python -c "from lightx2v import LightX2VPipeline; print('[setup_wan] LightX2V import OK after optional installs')" >/dev/null 2>&1
