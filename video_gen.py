@@ -180,14 +180,28 @@ class Wan22LightX2VGenerator:
 
         start = time.time()
 
-        @contextmanager
-        def _force_imageio_mp4_quality():
-            """Best-effort hijack if the backend uses imageio to write MP4s.
+        # Save/encode strategy (for fast A/B testing on VastAI without code changes):
+        # - WAN22_SAVE_MODE=backend : let LightX2V write the mp4 (legacy behavior)
+        # - WAN22_SAVE_MODE=frames  : require frames output and encode ourselves via imageio/ffmpeg
+        # - WAN22_SAVE_MODE=auto    : try frames first, fall back to backend saving
+        save_mode = os.getenv("WAN22_SAVE_MODE", "backend").strip().lower()
+        enable_imageio_patch = os.getenv("WAN22_IMAGEIO_PATCH", "0").strip() == "1"
+        force_reencode = os.getenv("WAN22_FORCE_REENCODE", "0").strip() == "1"
+        try:
+            output_fps = int(os.getenv("WAN22_FPS", "16"))
+        except ValueError:
+            output_fps = 16
 
-            If LightX2V calls imageio.mimsave internally, this forces high-quality
-            H.264 settings (CRF 18) at the FIRST encode (before any quality loss).
-            If LightX2V doesn't use imageio for saving, this has no effect.
+        @contextmanager
+        def _maybe_force_imageio_mp4_quality():
+            """Optionally hijack imageio.mimsave to force higher-quality mp4 settings.
+
+            Disabled by default. Enable with WAN22_IMAGEIO_PATCH=1.
             """
+
+            if not enable_imageio_patch:
+                yield {"called": False}
+                return
 
             state = {"called": False}
             original = getattr(imageio, "mimsave", None)
@@ -289,12 +303,42 @@ class Wan22LightX2VGenerator:
                 return None
             return max(candidates, key=lambda p: p.stat().st_mtime)
 
+        def _generate_backend(save_path: Path) -> None:
+            since = time.time()
+            with _maybe_force_imageio_mp4_quality() as patch_state:
+                _ = self.pipe.generate(
+                    seed=seed,
+                    prompt=enhanced_prompt,
+                    negative_prompt="",
+                    save_result_path=str(save_path),
+                )
+
+            # Some LightX2V builds ignore the filename and write to the directory.
+            if not save_path.exists():
+                saved = _find_newest_mp4(save_path.parent, since_ts=since)
+                if saved is not None:
+                    if saved.resolve() != save_path.resolve():
+                        shutil.copy2(saved, save_path)
+
+            # Avoid double-encoding unless explicitly requested.
+            if force_reencode and save_path.exists() and not patch_state.get("called"):
+                _reencode_mp4(save_path, save_path)
+
+        if save_mode == "backend":
+            _generate_backend(output_path)
+
+            if not output_path.exists():
+                raise RuntimeError(f"Generation completed but output not found: {output_path}")
+            if output_path.stat().st_size < 10_000:
+                raise RuntimeError(f"Generated file too small ({output_path.stat().st_size} bytes): {output_path}")
+            return str(output_path)
+
         # 1. Generate frames (LightX2V return type can vary by version)
         raw = self.pipe.generate(
             seed=seed,
             prompt=enhanced_prompt,
             negative_prompt="",
-            save_result_path=None, 
+            save_result_path=None,
         )
 
         def _to_uint8_rgb_ndarray(frame: object) -> np.ndarray:
@@ -408,47 +452,15 @@ class Wan22LightX2VGenerator:
 
         # Some LightX2V builds return None and only support saving to disk.
         if raw is None:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            since = time.time()
+            if save_mode == "frames":
+                raise RuntimeError(
+                    "WAN22_SAVE_MODE=frames requested, but LightX2V returned None for frames. "
+                    "Use WAN22_SAVE_MODE=backend or WAN22_SAVE_MODE=auto."
+                )
 
-            # Attempt 1: some versions accept a full file path.
-            patch_state = {"called": False}
-            try:
-                with _force_imageio_mp4_quality() as patch_state:
-                    _ = self.pipe.generate(
-                        seed=seed,
-                        prompt=enhanced_prompt,
-                        negative_prompt="",
-                        save_result_path=str(output_path),
-                    )
-            except Exception:
-                pass
-
-            if output_path.exists():
-                # If we successfully hijacked imageio inside the backend, avoid double-encoding.
-                if not patch_state.get("called"):
-                    _reencode_mp4(output_path, output_path)
-                video_frames = []
-            else:
-                # Attempt 2: pass a directory and discover the created mp4.
-                with _force_imageio_mp4_quality() as patch_state:
-                    _ = self.pipe.generate(
-                        seed=seed,
-                        prompt=enhanced_prompt,
-                        negative_prompt="",
-                        save_result_path=str(output_path.parent),
-                    )
-                saved = _find_newest_mp4(output_path.parent, since_ts=since)
-                if saved is None:
-                    raise RuntimeError(
-                        "LightX2V returned None for frames and did not write an MP4 to disk. "
-                        "Try updating LightX2V or check its output directory configuration."
-                    )
-                if saved.resolve() != output_path.resolve():
-                    shutil.copy2(saved, output_path)
-                if not patch_state.get("called"):
-                    _reencode_mp4(output_path, output_path)
-                video_frames = []
+            # auto mode fallback: let backend save.
+            _generate_backend(output_path)
+            video_frames = []
         else:
             video_frames = _extract_frames(raw)
 
@@ -458,7 +470,7 @@ class Wan22LightX2VGenerator:
             imageio.mimsave(
                 str(output_path),
                 video_frames,
-                fps=24,
+                fps=output_fps,
                 plugin="ffmpeg",
                 ffmpeg_params=[
                     "-crf",
