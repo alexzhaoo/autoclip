@@ -131,6 +131,8 @@ class Wan22LightX2VGenerator:
         import numpy as np
         from collections.abc import Sequence
         import shutil
+        import subprocess
+        from contextlib import contextmanager
 
         try:
             from PIL import Image as pil_image_module  # type: ignore
@@ -145,7 +147,113 @@ class Wan22LightX2VGenerator:
             seed = random.randint(0, 2**31 - 1)
 
         start = time.time()
+
+        @contextmanager
+        def _force_imageio_mp4_quality():
+            """Best-effort hijack if the backend uses imageio to write MP4s.
+
+            If LightX2V calls imageio.mimsave internally, this forces high-quality
+            H.264 settings (CRF 18) at the FIRST encode (before any quality loss).
+            If LightX2V doesn't use imageio for saving, this has no effect.
+            """
+
+            state = {"called": False}
+            original = getattr(imageio, "mimsave", None)
+            if original is None:
+                yield state
+                return
+
+            def _strip_ffmpeg_params(params: list[str], flags_with_values: set[str]) -> list[str]:
+                out: list[str] = []
+                skip_next = False
+                for p in params:
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    if p in flags_with_values:
+                        skip_next = True
+                        continue
+                    out.append(p)
+                return out
+
+            def patched(uri, ims, *args, **kwargs):
+                state["called"] = True
+
+                uri_s = str(uri)
+                if uri_s.lower().endswith(".mp4"):
+                    kwargs.setdefault("plugin", "ffmpeg")
+
+                    forced = [
+                        "-crf",
+                        "18",
+                        "-preset",
+                        "slow",
+                        "-c:v",
+                        "libx264",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-movflags",
+                        "+faststart",
+                    ]
+
+                    existing = kwargs.get("ffmpeg_params")
+                    if existing is None:
+                        kwargs["ffmpeg_params"] = forced
+                    else:
+                        existing_list = list(existing)
+                        existing_list = _strip_ffmpeg_params(
+                            existing_list,
+                            flags_with_values={"-crf", "-preset", "-c:v", "-pix_fmt"},
+                        )
+                        kwargs["ffmpeg_params"] = existing_list + forced
+
+                return original(uri, ims, *args, **kwargs)
+
+            imageio.mimsave = patched  # type: ignore[assignment]
+            try:
+                yield state
+            finally:
+                imageio.mimsave = original  # type: ignore[assignment]
         
+        def _reencode_mp4(input_path: Path, output_path: Path) -> None:
+            tmp_out = output_path.with_suffix(output_path.suffix + ".reencode.tmp")
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(input_path),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "slow",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(tmp_out),
+            ]
+            subprocess.run(cmd, check=True)
+            tmp_out.replace(output_path)
+
+        def _find_newest_mp4(search_dir: Path, since_ts: float) -> Path | None:
+            candidates: list[Path] = []
+            if not search_dir.exists():
+                return None
+            for p in search_dir.glob("*.mp4"):
+                try:
+                    if p.stat().st_mtime >= since_ts - 1.0:
+                        candidates.append(p)
+                except OSError:
+                    continue
+            if not candidates:
+                return None
+            return max(candidates, key=lambda p: p.stat().st_mtime)
+
         # 1. Generate frames (LightX2V return type can vary by version)
         raw = self.pipe.generate(
             seed=seed,
@@ -263,7 +371,51 @@ class Wan22LightX2VGenerator:
 
             raise TypeError(f"Unsupported LightX2V frame output type: {type(obj).__name__}")
 
-        video_frames = _extract_frames(raw)
+        # Some LightX2V builds return None and only support saving to disk.
+        if raw is None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            since = time.time()
+
+            # Attempt 1: some versions accept a full file path.
+            patch_state = {"called": False}
+            try:
+                with _force_imageio_mp4_quality() as patch_state:
+                    _ = self.pipe.generate(
+                        seed=seed,
+                        prompt=enhanced_prompt,
+                        negative_prompt="",
+                        save_result_path=str(output_path),
+                    )
+            except Exception:
+                pass
+
+            if output_path.exists():
+                # If we successfully hijacked imageio inside the backend, avoid double-encoding.
+                if not patch_state.get("called"):
+                    _reencode_mp4(output_path, output_path)
+                video_frames = []
+            else:
+                # Attempt 2: pass a directory and discover the created mp4.
+                with _force_imageio_mp4_quality() as patch_state:
+                    _ = self.pipe.generate(
+                        seed=seed,
+                        prompt=enhanced_prompt,
+                        negative_prompt="",
+                        save_result_path=str(output_path.parent),
+                    )
+                saved = _find_newest_mp4(output_path.parent, since_ts=since)
+                if saved is None:
+                    raise RuntimeError(
+                        "LightX2V returned None for frames and did not write an MP4 to disk. "
+                        "Try updating LightX2V or check its output directory configuration."
+                    )
+                if saved.resolve() != output_path.resolve():
+                    shutil.copy2(saved, output_path)
+                if not patch_state.get("called"):
+                    _reencode_mp4(output_path, output_path)
+                video_frames = []
+        else:
+            video_frames = _extract_frames(raw)
 
         # 3. Manually save with High Quality settings
         # If backend already wrote a file (rare), skip re-encoding.
