@@ -15,7 +15,6 @@ from tqdm import tqdm
 from tqdm import trange
 import re
 import pysrt
-import glob
 import pysubs2
 import nltk
 import ssl
@@ -26,89 +25,133 @@ from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 import argparse
 import traceback
-import os
 import sys
 
-import os
-import sys
+from pathlib import Path
+import importlib
 
-def export_nvidia_libs():
-    """
-    Auto-exports NVIDIA library paths from the pip environment 
-    so CTranslate2/Faster-Whisper can find them.
-    """
-    libs_to_check = ['nvidia.cublas.lib', 'nvidia.cudnn.lib']
-    
-    for lib_name in libs_to_check:
-        try:
-            # Dynamically import the library module
-            lib_module = __import__(lib_name, fromlist=['lib'])
-            
-            # 🛡️ ROBUST PATH DETECTION (Fixes TypeError)
-            lib_dir = None
-            if hasattr(lib_module, '__file__') and lib_module.__file__:
-                lib_dir = os.path.dirname(lib_module.__file__)
-            elif hasattr(lib_module, '__path__'):
-                # Fallback for namespace packages
-                lib_dir = list(lib_module.__path__)[0]
-            
-            if not lib_dir or not os.path.isdir(lib_dir):
-                print(f"⚠️ Warning: Could not determine valid path for '{lib_name}'")
-                continue
 
-            # Add to LD_LIBRARY_PATH
-            current_path = os.environ.get('LD_LIBRARY_PATH', '')
-            if lib_dir not in current_path:
-                print(f"🔗 Adding {lib_name} to LD_LIBRARY_PATH: {lib_dir}")
-                os.environ['LD_LIBRARY_PATH'] = f"{lib_dir}:{current_path}"
-                
-        except ImportError:
-            print(f"⚠️ Warning: Could not find pip package '{lib_name}'. GPU acceleration might fail.")
+def _prepend_ld_library_path(*paths: str) -> None:
+    existing = os.environ.get('LD_LIBRARY_PATH', '')
+    existing_parts = [p for p in existing.split(':') if p]
 
-# RUN THIS FIRST
-export_nvidia_libs()
+    to_add: list[str] = []
+    for p in paths:
+        if not p:
+            continue
+        if not os.path.isdir(p):
+            continue
+        if p in existing_parts or p in to_add:
+            continue
+        to_add.append(p)
 
-# NOW import your heavy libraries
+    if not to_add:
+        return
+
+    os.environ['LD_LIBRARY_PATH'] = ':'.join(to_add + existing_parts)
+
+
+def _discover_pip_lib_dir(module_name: str) -> str | None:
+    try:
+        mod = importlib.import_module(module_name)
+        if getattr(mod, '__file__', None):
+            d = os.path.dirname(mod.__file__)
+            if os.path.isdir(d):
+                return d
+        if getattr(mod, '__path__', None):
+            d = list(mod.__path__)[0]
+            if os.path.isdir(d):
+                return d
+    except Exception:
+        pass
+    return None
+
+
+def _discover_cudnn_lib_dir() -> str | None:
+    # Preferred: pip wheel layout (nvidia-cudnn-cu12)
+    d = _discover_pip_lib_dir('nvidia.cudnn.lib')
+    if d:
+        return d
+
+    # Fallback: search site-packages for libcudnn_ops.so* (matches VastAI issue)
+    try:
+        import site
+
+        for sp in site.getsitepackages():
+            hits = glob.glob(os.path.join(sp, 'nvidia', 'cudnn', 'lib', 'libcudnn_ops.so*'))
+            if hits:
+                return os.path.dirname(hits[0])
+    except Exception:
+        pass
+
+    return None
+
+
+def export_gpu_runtime_libs() -> None:
+    """Ensure pip-provided CUDA/cuDNN shared libraries are discoverable at runtime."""
+    cublas_dir = _discover_pip_lib_dir('nvidia.cublas.lib')
+    cudnn_dir = _discover_cudnn_lib_dir()
+
+    if cublas_dir:
+        _prepend_ld_library_path(cublas_dir)
+    if cudnn_dir:
+        _prepend_ld_library_path(cudnn_dir)
+
+    if cudnn_dir:
+        print(f"[INFO] LD_LIBRARY_PATH includes cuDNN: {cudnn_dir}")
+    else:
+        print("[WARN] Could not locate cuDNN (nvidia-cudnn-cu12). GPU transcription may fail.")
+
+
+# Must run before importing CTranslate2/faster-whisper
+export_gpu_runtime_libs()
+
 import torch
+
+# Also add PyTorch's bundled lib directory (helps CTranslate2 resolve CUDA deps)
+try:
+    torch_lib = str((Path(torch.__file__).resolve().parent / 'lib'))
+    if os.path.isdir(torch_lib):
+        _prepend_ld_library_path(torch_lib)
+except Exception:
+    pass
+
 from faster_whisper import WhisperModel
-# NLTK data downloads with error handling for remote environments
+
+
 def ensure_nltk_data():
     """Ensure NLTK data is available, with fallbacks for remote environments"""
-    
-    # Set NLTK data path for remote environments
-    import os
+
     nltk_data_paths = [
-        '/workspace/nltk_data',  # Vast.ai custom path
-        '/root/nltk_data',       # Docker containers
-        os.path.expanduser('~/nltk_data')  # User home
+        '/workspace/nltk_data',
+        '/root/nltk_data',
+        os.path.expanduser('~/nltk_data'),
     ]
-    
+
     for path in nltk_data_paths:
-        if os.path.exists(path):
-            if path not in nltk.data.path:
-                nltk.data.path.insert(0, path)
-    
+        if os.path.exists(path) and path not in nltk.data.path:
+            nltk.data.path.insert(0, path)
+
     try:
-        # Try to download punkt tokenizer data
         print("📚 Downloading NLTK data...")
         nltk.download('punkt', quiet=True)
-        nltk.download('punkt_tab', quiet=True)  # New punkt tokenizer
+        nltk.download('punkt_tab', quiet=True)
         nltk.download('stopwords', quiet=True)
         print("✅ NLTK data downloaded successfully")
     except Exception as e:
         print(f"⚠️ NLTK download warning: {e}")
-        # Try alternative download locations
         try:
-            import ssl
             try:
                 _create_unverified_https_context = ssl._create_unverified_context
             except AttributeError:
-                pass
-            else:
+                _create_unverified_https_context = None
+            if _create_unverified_https_context is not None:
                 ssl._create_default_https_context = _create_unverified_https_context
-            
-            # Try downloading to the first available path
-            download_dir = next((p for p in nltk_data_paths if os.path.exists(os.path.dirname(p))), None)
+
+            download_dir = next(
+                (p for p in nltk_data_paths if os.path.exists(os.path.dirname(p))),
+                None,
+            )
             if download_dir:
                 os.makedirs(download_dir, exist_ok=True)
                 nltk.download('punkt', download_dir=download_dir, quiet=True)
@@ -120,6 +163,7 @@ def ensure_nltk_data():
         except Exception as e2:
             print(f"⚠️ NLTK download failed: {e2}")
             print("ℹ️ Will use fallback sentence splitting if needed")
+
 
 ensure_nltk_data()
 

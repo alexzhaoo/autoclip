@@ -5,7 +5,8 @@ torch
 # Run: pip install flash-attn==2.8.3 --no-build-isolation --use-pep517
 # flash-attn
 nvidia-cublas-cu12
-nvidia-cudnn-cu12
+# Ensure cuDNN 9.1+ is present; CTranslate2 may dlopen libcudnn_ops.so.9.1*
+nvidia-cudnn-cu12>=9.1,<10
 # Core dependencies
 opencv-python>=4.9.0.80
 diffusers>=0.31.0
