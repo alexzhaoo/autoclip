@@ -12,18 +12,20 @@ import torch
 class Wan22DistillConfig:
     num_inference_steps: int = 4
     guidance_scale: float = 1.0
-    width: int = 1280
-    height: int = 720
+    width: int = 832
+    height: int = 480
     num_frames: int = 81
     sample_shift: float = 5.0
     boundary_step_index: int = 2
     denoising_step_list: tuple[int, int, int, int] = (1000, 750, 500, 250)
+    config_json: Optional[Union[str, Path]] = None
+    rope_type: str = "torch"
 
 
 class Wan22LightX2VGenerator:
     """LightX2V wrapper for Wan2.2 T2V 4-step distillation with Dual-LoRA switching."""
 
-    PROMPT_PREFIX = "Cinematic shot, 4k, high motion, "
+    
 
     def __init__(
         self,
@@ -40,9 +42,6 @@ class Wan22LightX2VGenerator:
 
         if config.num_inference_steps != 4:
             raise ValueError("Wan2.2 4-step distilled LoRAs require num_inference_steps=4")
-
-        if float(config.guidance_scale) != 1.0:
-            raise ValueError("Wan2.2 distilled models require guidance_scale=1.0")
 
         os.environ.setdefault("DTYPE", "BF16")
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -103,23 +102,27 @@ class Wan22LightX2VGenerator:
             ]
         )
 
-        if attn_mode == "flash_attn2":
+        if attn_mode.startswith("flash_attn"):
             try:
                 import flash_attn  # noqa: F401
             except Exception:
                 attn_mode = "sdpa"
 
-        self.pipe.create_generator(
-            attn_mode=attn_mode,
-            infer_steps=config.num_inference_steps,
-            height=config.height,
-            width=config.width,
-            num_frames=config.num_frames,
-            guidance_scale=config.guidance_scale,
-            sample_shift=config.sample_shift,
-            boundary_step_index=config.boundary_step_index,
-            denoising_step_list=list(config.denoising_step_list),
-        )
+        if config.config_json is not None:
+            self.pipe.create_generator(config_json=str(config.config_json))
+        else:
+            self.pipe.create_generator(
+                attn_mode=attn_mode,
+                rope_type=config.rope_type,
+                infer_steps=config.num_inference_steps,
+                height=config.height,
+                width=config.width,
+                num_frames=config.num_frames,
+                guidance_scale=config.guidance_scale,
+                sample_shift=config.sample_shift,
+                boundary_step_index=config.boundary_step_index,
+                denoising_step_list=list(config.denoising_step_list),
+            )
 
         self.config = config
 
@@ -130,7 +133,7 @@ class Wan22LightX2VGenerator:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        enhanced_prompt = f"{self.PROMPT_PREFIX}{prompt.strip()}"
+        enhanced_prompt = f"{prompt.strip()}"
         if seed is None:
             seed = random.randint(0, 2**31 - 1)
 

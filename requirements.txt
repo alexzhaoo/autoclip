@@ -26,7 +26,7 @@ python-dotenv>=1.0.0
 yt-dlp>=2023.1.0
 
 # Video processing
-mediapipe>=0.10.0
+mediapipe==0.10.21
 moviepy>=1.0.3
 pysubs2>=1.6.0
 pysrt>=1.1.2
