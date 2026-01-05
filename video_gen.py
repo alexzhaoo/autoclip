@@ -23,7 +23,79 @@ class Wan22DistillConfig:
 
 
 class Wan22LightX2VGenerator:
-    """LightX2V wrapper for Wan2.2 T2V 4-step distillation with Dual-LoRA switching."""
+    """LightX2V wrapper for Wan2.2-Lightning (4-step) Dual-LoRA switching.
+
+    Wan2.2-Lightning LoRA releases ship as a directory containing:
+    - high_noise_model.safetensors
+    - low_noise_model.safetensors
+    """
+
+    @staticmethod
+    def _resolve_lightning_lora_dir(
+        models_dir: Path,
+        lightning_lora_dir: Optional[Union[str, Path]],
+        lightning_folder: str,
+    ) -> Path:
+        if lightning_lora_dir is not None:
+            candidate = Path(lightning_lora_dir)
+            if candidate.exists():
+                return candidate
+            raise FileNotFoundError(f"lightning_lora_dir does not exist: {candidate}")
+
+        env_dir = os.getenv("WAN22_LIGHTNING_LORA_DIR")
+        if env_dir:
+            candidate = Path(env_dir)
+            if candidate.exists():
+                return candidate
+            raise FileNotFoundError(f"WAN22_LIGHTNING_LORA_DIR does not exist: {candidate}")
+
+        repo_root = Path(__file__).resolve().parent
+        candidates = [
+            models_dir / "loras" / lightning_folder,
+            repo_root / "Wan2.2-Lightning" / lightning_folder,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        raise FileNotFoundError(
+            "Wan2.2-Lightning LoRA directory not found. "
+            "Set WAN22_LIGHTNING_LORA_DIR or pass lightning_lora_dir, e.g. "
+            "./Wan2.2-Lightning/Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0"
+        )
+
+    @staticmethod
+    def _maybe_downgrade_attn_mode(attn_mode: str) -> str:
+        if not attn_mode.startswith("flash_attn"):
+            return attn_mode
+
+        try:
+            import flash_attn  # type: ignore[import-not-found]  # noqa: F401
+        except Exception:
+            return "sdpa"
+
+        return attn_mode
+
+    @staticmethod
+    def _resolve_lightx2v_config_json(config: Wan22DistillConfig) -> Optional[Union[str, Path]]:
+        if config.config_json is not None:
+            return config.config_json
+
+        env_cfg = os.getenv("WAN22_LIGHTX2V_CONFIG_JSON")
+        if env_cfg:
+            return env_cfg
+
+        repo_cfg = (
+            Path(__file__).resolve().parent
+            / "LightX2V"
+            / "configs"
+            / "dist_infer"
+            / "wan22_moe_t2v_cfg.json"
+        )
+        if repo_cfg.exists():
+            return repo_cfg
+
+        return None
 
     
 
@@ -31,8 +103,7 @@ class Wan22LightX2VGenerator:
         self,
         models_dir: Union[str, Path] = "./models",
         base_model_dirname: str = "Wan2.2-T2V-A14B",
-        high_noise_lora_filename: str = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors",
-        low_noise_lora_filename: str = "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+        lightning_lora_dir: Optional[Union[str, Path]] = None,
         offload_model: bool = False,  # Changed default to False to keep on GPU
         config: Wan22DistillConfig = Wan22DistillConfig(),
         attn_mode: str = "flash_attn2",
@@ -47,19 +118,48 @@ class Wan22LightX2VGenerator:
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
         self.models_dir = Path(models_dir)
-        self.base_model_path = self.models_dir / base_model_dirname
-        self.high_noise_lora_path = self.models_dir / "loras" / high_noise_lora_filename
-        self.low_noise_lora_path = self.models_dir / "loras" / low_noise_lora_filename
+        # Support both layouts:
+        # - this repo's: ./models/Wan2.2-T2V-A14B
+        # - README's:    ./Wan2.2-T2V-A14B
+        base_model_candidate = Path(base_model_dirname)
+        if base_model_candidate.exists():
+            self.base_model_path = base_model_candidate
+        else:
+            repo_root = Path(__file__).resolve().parent
+            preferred = self.models_dir / base_model_dirname
+            fallback = repo_root / base_model_dirname
+            self.base_model_path = preferred if preferred.exists() else fallback
+
+        # Wan2.2-Lightning layout: a directory with high_noise_model/low_noise_model.
+        # Default search order:
+        # 1) explicit argument
+        # 2) env var WAN22_LIGHTNING_LORA_DIR
+        # 3) ./models/loras/<lightning folder>
+        # 4) ./Wan2.2-Lightning/<lightning folder>
+        lightning_folder = "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0"
+        self.lightning_lora_dir = self._resolve_lightning_lora_dir(
+            models_dir=self.models_dir,
+            lightning_lora_dir=lightning_lora_dir,
+            lightning_folder=lightning_folder,
+        )
+        self.high_noise_lora_path = self.lightning_lora_dir / "high_noise_model.safetensors"
+        self.low_noise_lora_path = self.lightning_lora_dir / "low_noise_model.safetensors"
 
         if not self.base_model_path.exists():
             raise FileNotFoundError(f"Base model not found at {self.base_model_path}")
         if not self.high_noise_lora_path.exists():
-            raise FileNotFoundError(f"High-noise LoRA not found at {self.high_noise_lora_path}")
+            raise FileNotFoundError(
+                f"High-noise Lightning LoRA not found at {self.high_noise_lora_path}. "
+                "Expected file name: high_noise_model.safetensors"
+            )
         if not self.low_noise_lora_path.exists():
-            raise FileNotFoundError(f"Low-noise LoRA not found at {self.low_noise_lora_path}")
+            raise FileNotFoundError(
+                f"Low-noise Lightning LoRA not found at {self.low_noise_lora_path}. "
+                "Expected file name: low_noise_model.safetensors"
+            )
 
         try:
-            from lightx2v import LightX2VPipeline
+            from lightx2v import LightX2VPipeline  # type: ignore[import-not-found]
         except Exception as e:
             raise RuntimeError(
                 "Failed to import LightX2V "
@@ -102,15 +202,17 @@ class Wan22LightX2VGenerator:
             ]
         )
 
-        if attn_mode.startswith("flash_attn"):
-            try:
-                import flash_attn  # noqa: F401
-            except Exception:
-                attn_mode = "sdpa"
+        attn_mode = self._maybe_downgrade_attn_mode(attn_mode)
 
-        if config.config_json is not None:
-            self.pipe.create_generator(config_json=str(config.config_json))
+        # Prefer LightX2V's own reference config when available.
+        # Grainy/under-denoised outputs are often caused by mismatched distill settings.
+        effective_config_json = self._resolve_lightx2v_config_json(config)
+
+        if effective_config_json is not None:
+            print(f"[INFO] LightX2V generator config_json: {effective_config_json}")
+            self.pipe.create_generator(config_json=str(effective_config_json))
         else:
+            print("[INFO] LightX2V generator config_json: (none) using inline distill params")
             self.pipe.create_generator(
                 attn_mode=attn_mode,
                 rope_type=config.rope_type,

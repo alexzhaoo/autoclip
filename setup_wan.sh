@@ -7,11 +7,14 @@ LIGHTX2V_DIR="${ROOT_DIR}/LightX2V"
 
 # Repo IDs
 BASE_REPO_ID="Wan-AI/Wan2.2-T2V-A14B"
-DISTILL_LORA_REPO_ID="lightx2v/Wan2.2-Distill-Loras"
+LIGHTNING_REPO_ID="lightx2v/Wan2.2-Lightning"
 
-# File Names (Exact Match)
-HIGH_NOISE_LORA="wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
-LOW_NOISE_LORA="wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors"
+# Lightning LoRA folder (from README)
+LIGHTNING_T2V_FOLDER="Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0"
+
+# Lightning file paths inside the repo
+HIGH_NOISE_LORA_PATH="${LIGHTNING_T2V_FOLDER}/high_noise_model.safetensors"
+LOW_NOISE_LORA_PATH="${LIGHTNING_T2V_FOLDER}/low_noise_model.safetensors"
 
 echo "[setup_wan] root: ${ROOT_DIR}"
 mkdir -p "${MODELS_DIR}/loras"
@@ -89,27 +92,30 @@ hf download "${BASE_REPO_ID}" \
   "${HF_LOCAL_DIR_ARGS[@]}" \
   --exclude "*.git*"
 
-echo "[setup_wan] Downloading Specific Distill LoRAs..."
-# We use --include to force download ONLY these files, ignoring the rest of the repo
-hf download "${DISTILL_LORA_REPO_ID}" \
+echo "[setup_wan] Downloading Wan2.2-Lightning T2V LoRAs (${LIGHTNING_T2V_FOLDER})..."
+# Download into ${MODELS_DIR}/loras/<folder>/... to match video_gen.py defaults.
+hf download "${LIGHTNING_REPO_ID}" \
   --local-dir "${MODELS_DIR}/loras" \
   "${HF_LOCAL_DIR_ARGS[@]}" \
-  "${HIGH_NOISE_LORA}"
+  "${HIGH_NOISE_LORA_PATH}"
 
-hf download "${DISTILL_LORA_REPO_ID}" \
+hf download "${LIGHTNING_REPO_ID}" \
   --local-dir "${MODELS_DIR}/loras" \
   "${HF_LOCAL_DIR_ARGS[@]}" \
-  "${LOW_NOISE_LORA}"
+  "${LOW_NOISE_LORA_PATH}"
 
 # Verify expected files exist
-if [ ! -f "${MODELS_DIR}/loras/${HIGH_NOISE_LORA}" ]; then
-  echo "[setup_wan] ERROR: High-noise LoRA missing: ${MODELS_DIR}/loras/${HIGH_NOISE_LORA}" >&2
+if [ ! -f "${MODELS_DIR}/loras/${HIGH_NOISE_LORA_PATH}" ]; then
+  echo "[setup_wan] ERROR: High-noise Lightning LoRA missing: ${MODELS_DIR}/loras/${HIGH_NOISE_LORA_PATH}" >&2
   exit 1
 fi
-if [ ! -f "${MODELS_DIR}/loras/${LOW_NOISE_LORA}" ]; then
-  echo "[setup_wan] ERROR: Low-noise LoRA missing: ${MODELS_DIR}/loras/${LOW_NOISE_LORA}" >&2
+if [ ! -f "${MODELS_DIR}/loras/${LOW_NOISE_LORA_PATH}" ]; then
+  echo "[setup_wan] ERROR: Low-noise Lightning LoRA missing: ${MODELS_DIR}/loras/${LOW_NOISE_LORA_PATH}" >&2
   exit 1
 fi
+
+echo "[setup_wan] Lightning LoRA dir: ${MODELS_DIR}/loras/${LIGHTNING_T2V_FOLDER}"
+echo "[setup_wan] Tip: export WAN22_LIGHTNING_LORA_DIR=\"${MODELS_DIR}/loras/${LIGHTNING_T2V_FOLDER}\""
 
 echo "[setup_wan] Done. Ready for generation."
 
