@@ -414,10 +414,10 @@ class Wan22LightX2VGenerator:
         # Note: depending on LightX2V version, weights may still be loaded during
         # create_generator(); in that case, the most important part is passing
         # device hints via _pipe_create_generator().
-        brute_force = os.getenv("WAN22_BRUTE_FORCE_CUDA", "").strip().lower() in {"1", "true", "yes", "y"}
-        force_gpu = os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}
-        if not offload_model and (force_gpu or brute_force):
-            _brute_force_move_lightx2v_to_cuda(self.pipe)
+        # NEW (Always runs if offload is disabled):
+        if not offload_model:
+             print("[WAN22] Running Brute Force Move...", flush=True) # Optional debug print
+             _brute_force_move_lightx2v_to_cuda(self.pipe)
         _log_cuda_memory("after LightX2VPipeline()")
 
         if offload_model:
