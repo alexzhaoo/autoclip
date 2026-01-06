@@ -107,6 +107,50 @@ def _pipe_create_generator(pipe: object, **kwargs) -> None:
     create_fn(**kwargs)
 
 
+def _brute_force_move_lightx2v_to_cuda(pipe: object) -> None:
+    """Best-effort move of LightX2V internals to CUDA.
+
+    This is intentionally defensive: LightX2V object graphs vary by version.
+    """
+
+    if not torch.cuda.is_available():
+        print("[WAN22] BRUTE FORCE: CUDA not available", flush=True)
+        return
+
+    print("[WAN22] BRUTE FORCE: attempting to move pipeline internals to CUDA...", flush=True)
+
+    # 1) Try the wrapper itself.
+    to_fn = getattr(pipe, "to", None)
+    if callable(to_fn):
+        try:
+            to_fn("cuda")
+            print("[WAN22] BRUTE FORCE: pipe.to('cuda') succeeded", flush=True)
+        except Exception as e:
+            print(f"[WAN22] BRUTE FORCE: pipe.to('cuda') failed: {e}", flush=True)
+
+    # 2) Try common internal model attribute names.
+    possible_model_attrs = ["model", "transformer", "dit", "unet", "denoiser", "runner", "generator"]
+    moved_any = False
+    for attr in possible_model_attrs:
+        try:
+            if not hasattr(pipe, attr):
+                continue
+            sub = getattr(pipe, attr)
+            sub_to = getattr(sub, "to", None)
+            if callable(sub_to):
+                print(f"[WAN22] BRUTE FORCE: Found '{attr}', moving to CUDA...", flush=True)
+                sub_to("cuda")
+                moved_any = True
+        except Exception as e:
+            print(f"[WAN22] BRUTE FORCE: moving '{attr}' failed: {e}", flush=True)
+
+    if not moved_any:
+        print("[WAN22] BRUTE FORCE: WARNING: did not find a known internal model attr to move", flush=True)
+
+    # 3) Verification probe.
+    _probe_first_param_device(pipe)
+
+
 def _ensure_torch_distributed_initialized() -> None:
     """LightX2V calls torch.distributed.get_rank() during init.
 
@@ -365,13 +409,15 @@ class Wan22LightX2VGenerator:
             model_path=str(self.base_model_path),
             model_cls="wan2.2_moe_distill",
         )
-        if not offload_model:
-            print("[WAN22] Forcing pipeline to CUDA before LoRA patch...", flush=True)
-            if hasattr(self.pipe, "to"):
-                self.pipe.to("cuda")
-            elif hasattr(self.pipe, "model") and hasattr(self.pipe.model, "to"):
-                # Fallback if the pipe wrapper itself doesn't have .to()
-                self.pipe.model.to("cuda")
+
+        # Aggressive opt-in: attempt to place weights on GPU as early as possible.
+        # Note: depending on LightX2V version, weights may still be loaded during
+        # create_generator(); in that case, the most important part is passing
+        # device hints via _pipe_create_generator().
+        brute_force = os.getenv("WAN22_BRUTE_FORCE_CUDA", "").strip().lower() in {"1", "true", "yes", "y"}
+        force_gpu = os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}
+        if not offload_model and (force_gpu or brute_force):
+            _brute_force_move_lightx2v_to_cuda(self.pipe)
         _log_cuda_memory("after LightX2VPipeline()")
 
         if offload_model:
@@ -452,16 +498,6 @@ class Wan22LightX2VGenerator:
         _probe_first_param_device(self.pipe)
 
         print("[WAN22] Finished Wan22LightX2VGenerator.__init__", flush=True)
-
-        # Best-effort: if the pipeline exposes a `.to(...)` method, move it to GPU.
-        # Some LightX2V versions already keep weights on GPU by default; this is harmless.
-        if torch.cuda.is_available() and os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}:
-            try:
-                to_fn = getattr(self.pipe, "to", None)
-                if callable(to_fn):
-                    to_fn("cuda")
-            except Exception:
-                pass
 
         self.config = config
 
