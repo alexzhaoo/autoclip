@@ -192,7 +192,7 @@ class Wan22LightX2VGenerator:
         models_dir: Union[str, Path] = "./models",
         base_model_dirname: str = "Wan2.2-T2V-A14B",
         lightning_lora_dir: Optional[Union[str, Path]] = None,
-        offload_model: bool = False,  # Changed default to False to keep on GPU
+        offload_model: bool = False,  # Default: keep on GPU
         config: Wan22DistillConfig = Wan22DistillConfig(),
         attn_mode: str = "flash_attn2",
     ):
@@ -204,6 +204,11 @@ class Wan22LightX2VGenerator:
 
         os.environ.setdefault("DTYPE", "BF16")
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+        # Explicit override: on high-VRAM GPUs we want everything resident on GPU.
+        # If set, this forces offload_model=False even if a caller passes True.
+        if os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}:
+            offload_model = False
 
         self.models_dir = Path(models_dir)
         # Support both layouts:
@@ -335,6 +340,16 @@ class Wan22LightX2VGenerator:
                 boundary_step_index=config.boundary_step_index,
                 denoising_step_list=list(config.denoising_step_list),
             )
+
+        # Best-effort: if the pipeline exposes a `.to(...)` method, move it to GPU.
+        # Some LightX2V versions already keep weights on GPU by default; this is harmless.
+        if torch.cuda.is_available() and os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}:
+            try:
+                to_fn = getattr(self.pipe, "to", None)
+                if callable(to_fn):
+                    to_fn("cuda")
+            except Exception:
+                pass
 
         self.config = config
 
