@@ -1,11 +1,58 @@
 import os
 import random
+import socket
 import time
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
 import torch
+
+
+def _ensure_torch_distributed_initialized() -> None:
+    """LightX2V calls torch.distributed.get_rank() during init.
+
+    In non-distributed, single-process runs (common for this repo), torch.distributed
+    is available but not initialized, and get_rank() raises.
+    """
+
+    try:
+        import torch.distributed as dist  # type: ignore
+    except Exception:
+        return
+
+    if not dist.is_available() or dist.is_initialized():
+        return
+
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+
+    # Prefer env:// if the user is explicitly running distributed.
+    if os.getenv("RANK") is not None or os.getenv("WORLD_SIZE") is not None:
+        dist.init_process_group(backend=backend, init_method="env://")
+        return
+
+    # Otherwise initialize a local, single-process group.
+    # Use a random free port to avoid collisions.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    _addr, port = sock.getsockname()
+    sock.close()
+
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", str(port))
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+
+    # Some backends use the temp dir for rendezvous artifacts.
+    os.environ.setdefault("TORCH_EXTENSIONS_DIR", os.path.join(tempfile.gettempdir(), "torch_extensions"))
+
+    dist.init_process_group(
+        backend=backend,
+        init_method=f"tcp://127.0.0.1:{port}",
+        rank=0,
+        world_size=1,
+    )
 
 
 @dataclass(frozen=True)
@@ -207,6 +254,9 @@ class Wan22LightX2VGenerator:
         # Prefer LightX2V's own reference config when available.
         # Grainy/under-denoised outputs are often caused by mismatched distill settings.
         effective_config_json = self._resolve_lightx2v_config_json(config)
+
+        # LightX2V currently calls torch.distributed.get_rank() during generator creation.
+        _ensure_torch_distributed_initialized()
 
         if effective_config_json is not None:
             print(f"[INFO] LightX2V generator config_json: {effective_config_json}")
