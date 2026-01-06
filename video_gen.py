@@ -1,4 +1,5 @@
 import json
+import inspect
 import os
 import random
 import socket
@@ -9,6 +10,45 @@ from pathlib import Path
 from typing import Optional, Union
 
 import torch
+
+
+def _log_cuda_memory(tag: str) -> None:
+    if os.getenv("WAN22_DEBUG_CUDA", "").strip().lower() not in {"1", "true", "yes", "y"}:
+        return
+    if not torch.cuda.is_available():
+        print(f"[CUDA] {tag}: cuda not available")
+        return
+    try:
+        free_b, total_b = torch.cuda.mem_get_info()
+        allocated_b = torch.cuda.memory_allocated()
+        reserved_b = torch.cuda.memory_reserved()
+        print(
+            f"[CUDA] {tag}: allocated={allocated_b/1024**3:.2f}GiB, reserved={reserved_b/1024**3:.2f}GiB, "
+            f"free={free_b/1024**3:.2f}GiB / total={total_b/1024**3:.2f}GiB"
+        )
+    except Exception as e:
+        print(f"[CUDA] {tag}: failed to query memory ({type(e).__name__}: {e})")
+
+
+def _pipe_create_generator(pipe: object, **kwargs) -> None:
+    """Call LightX2V create_generator with best-effort device placement."""
+
+    create_fn = getattr(pipe, "create_generator")
+    sig = None
+    try:
+        sig = inspect.signature(create_fn)
+    except Exception:
+        sig = None
+
+    if torch.cuda.is_available() and sig is not None:
+        if "device" in sig.parameters and "device" not in kwargs:
+            kwargs["device"] = "cuda"
+        if "device_id" in sig.parameters and "device_id" not in kwargs:
+            kwargs["device_id"] = 0
+        if "local_rank" in sig.parameters and "local_rank" not in kwargs:
+            kwargs["local_rank"] = 0
+
+    create_fn(**kwargs)
 
 
 def _ensure_torch_distributed_initialized() -> None:
@@ -269,6 +309,8 @@ class Wan22LightX2VGenerator:
             model_cls="wan2.2_moe_distill",
         )
 
+        _log_cuda_memory("after LightX2VPipeline()")
+
         if offload_model:
             self.pipe.enable_offload(
                 cpu_offload=True,
@@ -308,13 +350,14 @@ class Wan22LightX2VGenerator:
             patched = _maybe_patch_lightx2v_config_json(effective_config_json, config)
             if patched is not None:
                 print(f"[INFO] LightX2V generator config_json: {effective_config_json} (patched: {patched})")
-                self.pipe.create_generator(config_json=str(patched))
+                _pipe_create_generator(self.pipe, config_json=str(patched))
             else:
                 print(
                     f"[WARN] LightX2V generator config_json could not be patched ({effective_config_json}); "
                     "falling back to inline distill params"
                 )
-                self.pipe.create_generator(
+                _pipe_create_generator(
+                    self.pipe,
                     attn_mode=attn_mode,
                     rope_type=config.rope_type,
                     infer_steps=config.num_inference_steps,
@@ -328,7 +371,8 @@ class Wan22LightX2VGenerator:
                 )
         else:
             print("[INFO] LightX2V generator config_json: (none) using inline distill params")
-            self.pipe.create_generator(
+            _pipe_create_generator(
+                self.pipe,
                 attn_mode=attn_mode,
                 rope_type=config.rope_type,
                 infer_steps=config.num_inference_steps,
@@ -340,6 +384,8 @@ class Wan22LightX2VGenerator:
                 boundary_step_index=config.boundary_step_index,
                 denoising_step_list=list(config.denoising_step_list),
             )
+
+        _log_cuda_memory("after create_generator()")
 
         # Best-effort: if the pipeline exposes a `.to(...)` method, move it to GPU.
         # Some LightX2V versions already keep weights on GPU by default; this is harmless.
