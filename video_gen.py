@@ -429,22 +429,12 @@ class Wan22LightX2VGenerator:
                 vae_offload=False,
             )
 
-        # LightX2V's LoRA API and expected LoRA names have changed across versions.
-        # For Wan2.2 distill runners, LightX2V requires explicit LoRA names.
-        # In particular, its Wan2.2 model code indexes lora_config["name"] directly.
-        # If we pass dicts without a "name" key (e.g. {"lora_name": ...}), it can crash
-        # later with KeyError("name") during model initialization.
+        # NOTE: LightX2V appears to lazily materialize/load the actual model
+        # (torch.nn.Module + weights) during create_generator() in some versions.
+        # To ensure LoRA patching happens on GPU, we create the generator first,
+        # then move the now-materialized model to CUDA, then apply LoRAs.
         high_path = str(self.high_noise_lora_path)
         low_path = str(self.low_noise_lora_path)
-
-        # Use the official expected names.
-        # See LightX2V's example: examples/wan/wan_i2v_with_distill_loras.py
-        self.pipe.enable_lora(
-            [
-                {"name": "high_noise_model", "path": high_path, "strength": 1.0},
-                {"name": "low_noise_model", "path": low_path, "strength": 1.0},
-            ]
-        )
 
         attn_mode = self._maybe_downgrade_attn_mode(attn_mode)
 
@@ -493,6 +483,23 @@ class Wan22LightX2VGenerator:
                 boundary_step_index=config.boundary_step_index,
                 denoising_step_list=list(config.denoising_step_list),
             )
+
+        # Now that create_generator() has (likely) materialized the underlying model,
+        # force GPU residency before applying LoRAs.
+        brute_force = os.getenv("WAN22_BRUTE_FORCE_CUDA", "").strip().lower() in {"1", "true", "yes", "y"}
+        force_gpu = os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}
+        if not offload_model and (force_gpu or brute_force):
+            _brute_force_move_lightx2v_to_cuda(self.pipe)
+
+        # Apply Dual-LoRA after the base weights exist and (optionally) are on CUDA.
+        # LightX2V's LoRA API and expected LoRA names have changed across versions.
+        # For Wan2.2 distill runners, LightX2V requires explicit LoRA names.
+        self.pipe.enable_lora(
+            [
+                {"name": "high_noise_model", "path": high_path, "strength": 1.0},
+                {"name": "low_noise_model", "path": low_path, "strength": 1.0},
+            ]
+        )
 
         _log_cuda_memory("after create_generator()")
         _probe_first_param_device(self.pipe)
