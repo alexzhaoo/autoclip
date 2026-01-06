@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import socket
@@ -53,6 +54,46 @@ def _ensure_torch_distributed_initialized() -> None:
         rank=0,
         world_size=1,
     )
+
+
+def _maybe_patch_lightx2v_config_json(
+    config_json: Union[str, Path],
+    distill_config: "Wan22DistillConfig",
+) -> Optional[str]:
+    """Ensure LightX2V distill config has keys required by current runner.
+
+    Some LightX2V releases assume certain keys exist in the config JSON. In
+    single-process usage, users often point WAN22_LIGHTX2V_CONFIG_JSON at a
+    generic config which may omit distill-specific fields.
+
+    Returns a path to a patched temp JSON (string) or None if patching failed.
+    """
+
+    try:
+        path = Path(config_json)
+        raw = path.read_text(encoding="utf-8")
+        cfg = json.loads(raw)
+        if not isinstance(cfg, dict):
+            return None
+
+        # Required by Wan22StepDistillScheduler in LightX2V.
+        cfg.setdefault("denoising_step_list", list(distill_config.denoising_step_list))
+
+        # These are commonly consumed; safe defaults keep behavior consistent.
+        cfg.setdefault("boundary_step_index", distill_config.boundary_step_index)
+        cfg.setdefault("infer_steps", distill_config.num_inference_steps)
+        cfg.setdefault("guidance_scale", distill_config.guidance_scale)
+        cfg.setdefault("sample_shift", distill_config.sample_shift)
+        cfg.setdefault("height", distill_config.height)
+        cfg.setdefault("width", distill_config.width)
+        cfg.setdefault("num_frames", distill_config.num_frames)
+
+        fd, temp_path = tempfile.mkstemp(prefix="wan22_lightx2v_cfg_", suffix=".json")
+        os.close(fd)
+        Path(temp_path).write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        return temp_path
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True)
@@ -259,8 +300,27 @@ class Wan22LightX2VGenerator:
         _ensure_torch_distributed_initialized()
 
         if effective_config_json is not None:
-            print(f"[INFO] LightX2V generator config_json: {effective_config_json}")
-            self.pipe.create_generator(config_json=str(effective_config_json))
+            patched = _maybe_patch_lightx2v_config_json(effective_config_json, config)
+            if patched is not None:
+                print(f"[INFO] LightX2V generator config_json: {effective_config_json} (patched: {patched})")
+                self.pipe.create_generator(config_json=str(patched))
+            else:
+                print(
+                    f"[WARN] LightX2V generator config_json could not be patched ({effective_config_json}); "
+                    "falling back to inline distill params"
+                )
+                self.pipe.create_generator(
+                    attn_mode=attn_mode,
+                    rope_type=config.rope_type,
+                    infer_steps=config.num_inference_steps,
+                    height=config.height,
+                    width=config.width,
+                    num_frames=config.num_frames,
+                    guidance_scale=config.guidance_scale,
+                    sample_shift=config.sample_shift,
+                    boundary_step_index=config.boundary_step_index,
+                    denoising_step_list=list(config.denoising_step_list),
+                )
         else:
             print("[INFO] LightX2V generator config_json: (none) using inline distill params")
             self.pipe.create_generator(
