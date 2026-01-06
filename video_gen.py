@@ -17,7 +17,7 @@ def _log_cuda_memory(tag: str) -> None:
     if os.getenv("WAN22_DEBUG_CUDA", "1").strip().lower() in {"0", "false", "no", "n"}:
         return
     if not torch.cuda.is_available():
-        print(f"[CUDA] {tag}: cuda not available")
+        print(f"[CUDA] {tag}: cuda not available", flush=True)
         return
     try:
         free_b, total_b = torch.cuda.mem_get_info()
@@ -25,10 +25,61 @@ def _log_cuda_memory(tag: str) -> None:
         reserved_b = torch.cuda.memory_reserved()
         print(
             f"[CUDA] {tag}: allocated={allocated_b/1024**3:.2f}GiB, reserved={reserved_b/1024**3:.2f}GiB, "
-            f"free={free_b/1024**3:.2f}GiB / total={total_b/1024**3:.2f}GiB"
+            f"free={free_b/1024**3:.2f}GiB / total={total_b/1024**3:.2f}GiB, "
+            f"device={torch.cuda.current_device()} ({torch.cuda.get_device_name(torch.cuda.current_device())}), "
+            f"CUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES')}, initialized={torch.cuda.is_initialized()}"
+            ,
+            flush=True,
         )
     except Exception as e:
-        print(f"[CUDA] {tag}: failed to query memory ({type(e).__name__}: {e})")
+        print(f"[CUDA] {tag}: failed to query memory ({type(e).__name__}: {e})", flush=True)
+
+
+def _probe_first_param_device(obj: object) -> None:
+    """Best-effort probe to see where weights actually live (CPU vs CUDA)."""
+
+    try:
+        import torch.nn as nn
+    except Exception:
+        return
+
+    seen: set[int] = set()
+
+    def walk(o: object, depth: int) -> Optional["torch.nn.Module"]:
+        if depth <= 0:
+            return None
+        oid = id(o)
+        if oid in seen:
+            return None
+        seen.add(oid)
+
+        if isinstance(o, nn.Module):
+            return o
+
+        d = getattr(o, "__dict__", None)
+        if not isinstance(d, dict):
+            return None
+
+        for v in d.values():
+            if isinstance(v, (str, int, float, bool, type(None))):
+                continue
+            m = walk(v, depth - 1)
+            if m is not None:
+                return m
+        return None
+
+    module = walk(obj, depth=6)
+    if module is None:
+        print("[CUDA] probe: could not find torch.nn.Module in pipeline", flush=True)
+        return
+
+    try:
+        p = next(module.parameters())
+        print(f"[CUDA] probe: first parameter device={p.device}, dtype={p.dtype}", flush=True)
+    except StopIteration:
+        print("[CUDA] probe: module has no parameters", flush=True)
+    except Exception as e:
+        print(f"[CUDA] probe: failed ({type(e).__name__}: {e})", flush=True)
 
 
 def _pipe_create_generator(pipe: object, **kwargs) -> None:
@@ -387,6 +438,7 @@ class Wan22LightX2VGenerator:
             )
 
         _log_cuda_memory("after create_generator()")
+        _probe_first_param_device(self.pipe)
 
         # Best-effort: if the pipeline exposes a `.to(...)` method, move it to GPU.
         # Some LightX2V versions already keep weights on GPU by default; this is harmless.
