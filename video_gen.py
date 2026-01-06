@@ -13,13 +13,17 @@ import torch
 
 
 def _log_cuda_memory(tag: str) -> None:
+    print(f"[CUDA] {tag}: logger called", flush=True)
     # Default ON (prints only a couple lines during init). Opt-out with WAN22_DEBUG_CUDA=0/false.
     if os.getenv("WAN22_DEBUG_CUDA", "1").strip().lower() in {"0", "false", "no", "n"}:
+        print(f"[CUDA] {tag}: disabled via WAN22_DEBUG_CUDA", flush=True)
         return
     if not torch.cuda.is_available():
         print(f"[CUDA] {tag}: cuda not available", flush=True)
         return
     try:
+        # Force lazy CUDA init so mem_get_info is meaningful.
+        _ = torch.cuda.current_device()
         free_b, total_b = torch.cuda.mem_get_info()
         allocated_b = torch.cuda.memory_allocated()
         reserved_b = torch.cuda.memory_reserved()
