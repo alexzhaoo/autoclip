@@ -288,6 +288,7 @@ class Wan22LightX2VGenerator:
         config: Wan22DistillConfig = Wan22DistillConfig(),
         attn_mode: str = "flash_attn2",
     ):
+        print("[WAN22] Entering Wan22LightX2VGenerator.__init__", flush=True)
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is required for Wan2.2 generation")
 
@@ -439,6 +440,8 @@ class Wan22LightX2VGenerator:
 
         _log_cuda_memory("after create_generator()")
         _probe_first_param_device(self.pipe)
+
+        print("[WAN22] Finished Wan22LightX2VGenerator.__init__", flush=True)
 
         # Best-effort: if the pipeline exposes a `.to(...)` method, move it to GPU.
         # Some LightX2V versions already keep weights on GPU by default; this is harmless.
