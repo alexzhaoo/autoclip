@@ -365,7 +365,13 @@ class Wan22LightX2VGenerator:
             model_path=str(self.base_model_path),
             model_cls="wan2.2_moe_distill",
         )
-
+        if not offload_model:
+            print("[WAN22] Forcing pipeline to CUDA before LoRA patch...", flush=True)
+            if hasattr(self.pipe, "to"):
+                self.pipe.to("cuda")
+            elif hasattr(self.pipe, "model") and hasattr(self.pipe.model, "to"):
+                # Fallback if the pipe wrapper itself doesn't have .to()
+                self.pipe.model.to("cuda")
         _log_cuda_memory("after LightX2VPipeline()")
 
         if offload_model:
