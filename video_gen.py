@@ -13,7 +13,8 @@ import torch
 
 
 def _log_cuda_memory(tag: str) -> None:
-    if os.getenv("WAN22_DEBUG_CUDA", "").strip().lower() not in {"1", "true", "yes", "y"}:
+    # Default ON (prints only a couple lines during init). Opt-out with WAN22_DEBUG_CUDA=0/false.
+    if os.getenv("WAN22_DEBUG_CUDA", "1").strip().lower() in {"0", "false", "no", "n"}:
         return
     if not torch.cuda.is_available():
         print(f"[CUDA] {tag}: cuda not available")
