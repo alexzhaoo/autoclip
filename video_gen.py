@@ -245,16 +245,10 @@ def _maybe_patch_lightx2v_config_json(
         if not isinstance(cfg, dict):
             return None
 
-        # Attention backend: some LightX2V configs default to flash_attn.
-        # If kernels are unavailable, LightX2V can crash with "'NoneType' object is not callable".
-        attn_mode = cfg.get("attn_mode")
-        if isinstance(attn_mode, str) and attn_mode.startswith("flash_attn"):
-            if not _is_lightx2v_flash_attn_usable():
-                print(
-                    "[WARN] Config requested flash_attn but kernels are unavailable; overriding attn_mode to sdpa",
-                    flush=True,
-                )
-                cfg["attn_mode"] = "sdpa"
+        # Force attention backend to SDPA.
+        # This repo prioritizes stability over optional flash-attn/sage-attn backends,
+        # which can import but still crash later with "'NoneType' object is not callable".
+        cfg["attn_mode"] = "sdpa"
 
         # RoPE backend: some LightX2V configs default to flashinfer.
         # If flashinfer isn't installed/working, LightX2V ends up with a None
@@ -350,22 +344,9 @@ class Wan22LightX2VGenerator:
 
     @staticmethod
     def _maybe_downgrade_attn_mode(attn_mode: str) -> str:
-        if not attn_mode.startswith("flash_attn"):
-            return attn_mode
-
-        try:
-            import flash_attn  # type: ignore[import-not-found]  # noqa: F401
-        except Exception:
-            return "sdpa"
-
-        if not _is_lightx2v_flash_attn_usable():
-            print(
-                "[WARN] flash_attn requested but LightX2V flash-attn kernels are unavailable; falling back to sdpa",
-                flush=True,
-            )
-            return "sdpa"
-
-        return attn_mode
+        # Always use SDPA for stability.
+        _ = attn_mode
+        return "sdpa"
 
     @staticmethod
     def _resolve_lightx2v_config_json(config: Wan22DistillConfig) -> Optional[Union[str, Path]]:
@@ -397,7 +378,7 @@ class Wan22LightX2VGenerator:
         lightning_lora_dir: Optional[Union[str, Path]] = None,
         offload_model: bool = False,  # Default: keep on GPU
         config: Wan22DistillConfig = Wan22DistillConfig(),
-        attn_mode: str = "flash_attn2",
+        attn_mode: str = "sdpa",
     ):
         print("[WAN22] Entering Wan22LightX2VGenerator.__init__", flush=True)
         if not torch.cuda.is_available():
@@ -491,6 +472,10 @@ class Wan22LightX2VGenerator:
         low_path = str(self.low_noise_lora_path)
 
         attn_mode = self._maybe_downgrade_attn_mode(attn_mode)
+        if attn_mode != "sdpa":
+            # Defensive: _maybe_downgrade_attn_mode currently forces sdpa, but keep this
+            # in case future edits change behavior.
+            attn_mode = "sdpa"
 
         # Prefer LightX2V's own reference config when available.
         # Grainy/under-denoised outputs are often caused by mismatched distill settings.
