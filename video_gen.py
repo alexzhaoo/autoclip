@@ -217,11 +217,29 @@ def _maybe_patch_lightx2v_config_json(
     """
 
     try:
+        import importlib.util
+
         path = Path(config_json)
         raw = path.read_text(encoding="utf-8")
         cfg = json.loads(raw)
         if not isinstance(cfg, dict):
             return None
+
+        # RoPE backend: some LightX2V configs default to flashinfer.
+        # If flashinfer isn't installed/working, LightX2V ends up with a None
+        # function pointer and crashes with "'NoneType' object is not callable".
+        rope_type = distill_config.rope_type
+        if rope_type.strip().lower() in {"flashinfer", "flash_infer"}:
+            if importlib.util.find_spec("flashinfer") is None:
+                print(
+                    "[WARN] Requested rope_type=flashinfer but flashinfer is not installed; "
+                    "falling back to rope_type=torch",
+                    flush=True,
+                )
+                rope_type = "torch"
+
+        # Force/override rope_type so config_json can't silently select flashinfer.
+        cfg["rope_type"] = rope_type
 
         # Required by Wan22StepDistillScheduler in LightX2V.
         cfg.setdefault("denoising_step_list", list(distill_config.denoising_step_list))
@@ -416,15 +434,6 @@ class Wan22LightX2VGenerator:
             model_path=str(self.base_model_path),
             model_cls="wan2.2_moe_distill",
         )
-
-        # Aggressive opt-in: attempt to place weights on GPU as early as possible.
-        # Note: depending on LightX2V version, weights may still be loaded during
-        # create_generator(); in that case, the most important part is passing
-        # device hints via _pipe_create_generator().
-        # NEW (Always runs if offload is disabled):
-        if not offload_model:
-             print("[WAN22] Running Brute Force Move...", flush=True) # Optional debug print
-             _brute_force_move_lightx2v_to_cuda(self.pipe)
         _log_cuda_memory("after LightX2VPipeline()")
 
         if offload_model:
@@ -493,9 +502,7 @@ class Wan22LightX2VGenerator:
 
         # Now that create_generator() has (likely) materialized the underlying model,
         # force GPU residency before applying LoRAs.
-        brute_force = os.getenv("WAN22_BRUTE_FORCE_CUDA", "").strip().lower() in {"1", "true", "yes", "y"}
-        force_gpu = os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}
-        if not offload_model and (force_gpu or brute_force):
+        if not offload_model:
             _brute_force_move_lightx2v_to_cuda(self.pipe)
 
         # Apply Dual-LoRA after the base weights exist and (optionally) are on CUDA.
