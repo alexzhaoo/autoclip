@@ -536,7 +536,11 @@ class Wan22LightX2VVideoGenerator:
             self._gen.generate_clip(prompt=prompt, output_path=output_path)
             return True
         except Exception as e:
-            print(f"  ❌ LightX2V generation error: {e}")
+            import traceback
+
+            tb = traceback.format_exc()
+            print(f"  ❌ LightX2V generation error: {type(e).__name__}: {e}")
+            print(tb)
             return False
 
 class ProductionBRollPipeline:

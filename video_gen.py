@@ -90,21 +90,28 @@ def _pipe_create_generator(pipe: object, **kwargs) -> None:
     """Call LightX2V create_generator with best-effort device placement."""
 
     create_fn = getattr(pipe, "create_generator")
-    sig = None
+    if not torch.cuda.is_available():
+        create_fn(**kwargs)
+        return
+
+    # LightX2V's API has changed across versions. In some builds, signature
+    # introspection fails (or create_generator is wrapped), so we can't reliably
+    # detect supported kwargs. To keep the runner from initializing on CPU,
+    # we optimistically pass CUDA placement hints and fall back if rejected.
+    candidate_kwargs = dict(kwargs)
+    candidate_kwargs.setdefault("device", "cuda")
+    candidate_kwargs.setdefault("device_id", 0)
+    candidate_kwargs.setdefault("local_rank", 0)
+
     try:
-        sig = inspect.signature(create_fn)
-    except Exception:
-        sig = None
-
-    if torch.cuda.is_available() and sig is not None:
-        if "device" in sig.parameters and "device" not in kwargs:
-            kwargs["device"] = "cuda"
-        if "device_id" in sig.parameters and "device_id" not in kwargs:
-            kwargs["device_id"] = 0
-        if "local_rank" in sig.parameters and "local_rank" not in kwargs:
-            kwargs["local_rank"] = 0
-
-    create_fn(**kwargs)
+        create_fn(**candidate_kwargs)
+        return
+    except TypeError:
+        # Retry after removing any unsupported placement kwargs.
+        # This keeps compatibility with older LightX2V versions.
+        stripped = dict(kwargs)
+        create_fn(**stripped)
+        return
 
 
 def _brute_force_move_lightx2v_to_cuda(pipe: object) -> None:
@@ -520,12 +527,48 @@ class Wan22LightX2VGenerator:
             seed = random.randint(0, 2**31 - 1)
 
         start = time.time()
-        self.pipe.generate(
-            seed=seed,
-            prompt=enhanced_prompt,
-            negative_prompt="",
-            save_result_path=str(output_path),
-        )
+        try:
+            self.pipe.generate(
+                seed=seed,
+                prompt=enhanced_prompt,
+                negative_prompt="",
+                save_result_path=str(output_path),
+            )
+        except Exception as e:
+            import traceback
+            from importlib import metadata
+
+            lightx2v_version = None
+            try:
+                lightx2v_version = metadata.version("lightx2v")
+            except Exception:
+                lightx2v_version = None
+
+            # The most common cause of "'NoneType' object is not callable" here is a
+            # LightX2V internal callback/hook (often LoRA switching in Wan distill runners)
+            # not being initialized due to a version/API mismatch.
+            diag = {
+                "lightx2v_version": lightx2v_version,
+                "pipe_type": type(self.pipe).__name__,
+                "has_create_generator": callable(getattr(self.pipe, "create_generator", None)),
+                "has_enable_lora": callable(getattr(self.pipe, "enable_lora", None)),
+                "has_generate": callable(getattr(self.pipe, "generate", None)),
+                "models_dir": str(self.models_dir),
+                "base_model_path": str(self.base_model_path),
+                "high_noise_lora_path": str(self.high_noise_lora_path),
+                "low_noise_lora_path": str(self.low_noise_lora_path),
+            }
+
+            tb = traceback.format_exc()
+            raise RuntimeError(
+                "LightX2V generation failed inside LightX2VPipeline.generate(). "
+                "If the error is 'NoneType object is not callable', it is usually caused by "
+                "a LightX2V version mismatch where the Wan distill runner expects a hook/callback "
+                "(often LoRA switching HIGH/LOW noise models) that was not initialized. "
+                f"Original error: {type(e).__name__}: {e}\n"
+                f"Diagnostics: {diag}\n"
+                f"Traceback:\n{tb}"
+            ) from e
         _ = time.time() - start
 
         if not output_path.exists():
