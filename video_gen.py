@@ -39,6 +39,26 @@ def _log_cuda_memory(tag: str) -> None:
         print(f"[CUDA] {tag}: failed to query memory ({type(e).__name__}: {e})", flush=True)
 
 
+def _is_lightx2v_flash_attn_usable() -> bool:
+    """Return True if LightX2V's FlashAttention backend appears runnable.
+
+    LightX2V can import even when its flash-attn function pointers are None.
+    That later manifests as: TypeError: 'NoneType' object is not callable.
+    """
+
+    try:
+        import importlib
+
+        mod = importlib.import_module("lightx2v.common.ops.attn.flash_attn")
+        for name in ("flash_attn_varlen_func_v3", "flash_attn_varlen_func", "flash_attn_func"):
+            fn = getattr(mod, name, None)
+            if fn is not None:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _probe_first_param_device(obj: object) -> None:
     """Best-effort probe to see where weights actually live (CPU vs CUDA)."""
 
@@ -225,6 +245,17 @@ def _maybe_patch_lightx2v_config_json(
         if not isinstance(cfg, dict):
             return None
 
+        # Attention backend: some LightX2V configs default to flash_attn.
+        # If kernels are unavailable, LightX2V can crash with "'NoneType' object is not callable".
+        attn_mode = cfg.get("attn_mode")
+        if isinstance(attn_mode, str) and attn_mode.startswith("flash_attn"):
+            if not _is_lightx2v_flash_attn_usable():
+                print(
+                    "[WARN] Config requested flash_attn but kernels are unavailable; overriding attn_mode to sdpa",
+                    flush=True,
+                )
+                cfg["attn_mode"] = "sdpa"
+
         # RoPE backend: some LightX2V configs default to flashinfer.
         # If flashinfer isn't installed/working, LightX2V ends up with a None
         # function pointer and crashes with "'NoneType' object is not callable".
@@ -325,6 +356,13 @@ class Wan22LightX2VGenerator:
         try:
             import flash_attn  # type: ignore[import-not-found]  # noqa: F401
         except Exception:
+            return "sdpa"
+
+        if not _is_lightx2v_flash_attn_usable():
+            print(
+                "[WARN] flash_attn requested but LightX2V flash-attn kernels are unavailable; falling back to sdpa",
+                flush=True,
+            )
             return "sdpa"
 
         return attn_mode
