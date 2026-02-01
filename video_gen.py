@@ -266,6 +266,13 @@ def _maybe_patch_lightx2v_config_json(
         # Force/override rope_type so config_json can't silently select flashinfer.
         cfg["rope_type"] = rope_type
 
+        # Force attention backend to SDPA (explicitly set associated keys)
+        # LightX2V checks self_attn_1_type, etc.
+        cfg["attn_mode"] = "sdpa"
+        cfg["self_attn_1_type"] = "sdpa"
+        cfg["cross_attn_1_type"] = "sdpa"
+        cfg["cross_attn_2_type"] = "sdpa"
+
         # Force single-process configuration if running in world_size=1
         # The error "cfg_p_size * seq_p_size == world_size" suggests these keys exist.
         
