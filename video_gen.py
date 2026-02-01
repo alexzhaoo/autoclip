@@ -248,7 +248,6 @@ def _maybe_patch_lightx2v_config_json(
         # Force attention backend to SDPA.
         # This repo prioritizes stability over optional flash-attn/sage-attn backends,
         # which can import but still crash later with "'NoneType' object is not callable".
-        cfg["attn_mode"] = "sdpa"
 
         # RoPE backend: some LightX2V configs default to flashinfer.
         # If flashinfer isn't installed/working, LightX2V ends up with a None
@@ -273,20 +272,18 @@ def _maybe_patch_lightx2v_config_json(
         cfg["self_attn_1_type"] = "torch_sdpa"
         cfg["cross_attn_1_type"] = "torch_sdpa"
         cfg["cross_attn_2_type"] = "torch_sdpa"
-        
-        # Explicitly set guidance scale and enable_cfg based on distill config
-        # This prevents inconsistent states where guid=1.0 but enable_cfg=True (causing errors in model.py)
+
         # Convert to float to avoid any tensor issues
         g_scale = float(distill_config.guidance_scale)
-        cfg["sample_guide_scale"] = g_scale
-        cfg["guidance_scale"] = g_scale
-        
-        if g_scale == 1.0:
-            print("[WAN22] Syncing config: guidance_scale=1.0 -> enable_cfg=False", flush=True)
-            cfg["enable_cfg"] = False
-        else:
-            print(f"[WAN22] Syncing config: guidance_scale={g_scale} -> enable_cfg=True", flush=True)
-            cfg["enable_cfg"] = True
+        if "sample_guide_scale" not in cfg:
+            cfg["sample_guide_scale"] = [g_scale, g_scale]
+        if "enable_cfg" not in cfg:
+            if g_scale == 1.0:
+                print("[WAN22] Syncing config: guidance_scale=1.0 -> enable_cfg=False", flush=True)
+                cfg["enable_cfg"] = False
+            else:
+                print(f"[WAN22] Syncing config: guidance_scale={g_scale} -> enable_cfg=True", flush=True)
+                cfg["enable_cfg"] = True
 
         # Force single-process configuration if running in world_size=1
         # The error "cfg_p_size * seq_p_size == world_size" suggests these keys exist.
@@ -297,9 +294,8 @@ def _maybe_patch_lightx2v_config_json(
         # force parallelism off.
         
         print("[WAN22] Patching config: Disabling distributed parallelism for single-device usage", flush=True)
-        cfg["parallel"] = False
-        cfg["seq_parallel"] = False
-        cfg["cfg_parallel"] = False
+        if isinstance(cfg.get("parallel"), dict):
+            cfg["parallel"] = {"cfg_p_size": 1}
         
         # Also strip top-level keys that might trigger old logic
         for k in ["cfg_p_size", "seq_p_size", "ulysses_size", "ring_degree", "text_parallel_size"]:
@@ -314,6 +310,9 @@ def _maybe_patch_lightx2v_config_json(
         cfg.setdefault("infer_steps", distill_config.num_inference_steps)
         cfg.setdefault("guidance_scale", distill_config.guidance_scale)
         cfg.setdefault("sample_shift", distill_config.sample_shift)
+        cfg.setdefault("target_height", distill_config.height)
+        cfg.setdefault("target_width", distill_config.width)
+        cfg.setdefault("target_video_length", distill_config.num_frames)
         cfg.setdefault("height", distill_config.height)
         cfg.setdefault("width", distill_config.width)
         cfg.setdefault("num_frames", distill_config.num_frames)
@@ -329,7 +328,7 @@ def _maybe_patch_lightx2v_config_json(
 @dataclass(frozen=True)
 class Wan22DistillConfig:
     num_inference_steps: int = 4
-    guidance_scale: float = 1.0
+    guidance_scale: float = 5.0
     width: int = 832
     height: int = 480
     num_frames: int = 81
@@ -406,6 +405,15 @@ class Wan22LightX2VGenerator:
         )
         if repo_cfg.exists():
             return repo_cfg
+
+        try:
+            from importlib import resources
+
+            cfg_path = resources.files("lightx2v").joinpath("configs", "dist_infer", "wan22_moe_t2v_cfg.json")
+            if cfg_path.is_file():
+                return str(cfg_path)
+        except Exception:
+            pass
 
         return None
 
@@ -542,7 +550,7 @@ class Wan22LightX2VGenerator:
                     height=config.height,
                     width=config.width,
                     num_frames=config.num_frames,
-                    guidance_scale=config.guidance_scale,
+                    guidance_scale=[config.guidance_scale, config.guidance_scale],
                     sample_shift=config.sample_shift,
                     boundary_step_index=config.boundary_step_index,
                     denoising_step_list=list(config.denoising_step_list),
@@ -557,7 +565,7 @@ class Wan22LightX2VGenerator:
                 height=config.height,
                 width=config.width,
                 num_frames=config.num_frames,
-                guidance_scale=config.guidance_scale,
+                guidance_scale=[config.guidance_scale, config.guidance_scale],
                 sample_shift=config.sample_shift,
                 boundary_step_index=config.boundary_step_index,
                 denoising_step_list=list(config.denoising_step_list),
