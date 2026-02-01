@@ -267,12 +267,26 @@ def _maybe_patch_lightx2v_config_json(
         cfg["rope_type"] = rope_type
 
         # Force attention backend to SDPA (explicitly set associated keys)
-        # LightX2V checks self_attn_1_type, etc. 
+        # LightX2V checks self_attn_1_type, etc.
         # The registry key is "torch_sdpa", not "sdpa".
         cfg["attn_mode"] = "torch_sdpa"
         cfg["self_attn_1_type"] = "torch_sdpa"
         cfg["cross_attn_1_type"] = "torch_sdpa"
         cfg["cross_attn_2_type"] = "torch_sdpa"
+        
+        # Explicitly set guidance scale and enable_cfg based on distill config
+        # This prevents inconsistent states where guid=1.0 but enable_cfg=True (causing errors in model.py)
+        # Convert to float to avoid any tensor issues
+        g_scale = float(distill_config.guidance_scale)
+        cfg["sample_guide_scale"] = g_scale
+        cfg["guidance_scale"] = g_scale
+        
+        if g_scale == 1.0:
+            print("[WAN22] Syncing config: guidance_scale=1.0 -> enable_cfg=False", flush=True)
+            cfg["enable_cfg"] = False
+        else:
+            print(f"[WAN22] Syncing config: guidance_scale={g_scale} -> enable_cfg=True", flush=True)
+            cfg["enable_cfg"] = True
 
         # Force single-process configuration if running in world_size=1
         # The error "cfg_p_size * seq_p_size == world_size" suggests these keys exist.
