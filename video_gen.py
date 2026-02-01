@@ -267,11 +267,12 @@ def _maybe_patch_lightx2v_config_json(
         cfg["rope_type"] = rope_type
 
         # Force attention backend to SDPA (explicitly set associated keys)
-        # LightX2V checks self_attn_1_type, etc.
-        cfg["attn_mode"] = "sdpa"
-        cfg["self_attn_1_type"] = "sdpa"
-        cfg["cross_attn_1_type"] = "sdpa"
-        cfg["cross_attn_2_type"] = "sdpa"
+        # LightX2V checks self_attn_1_type, etc. 
+        # The registry key is "torch_sdpa", not "sdpa".
+        cfg["attn_mode"] = "torch_sdpa"
+        cfg["self_attn_1_type"] = "torch_sdpa"
+        cfg["cross_attn_1_type"] = "torch_sdpa"
+        cfg["cross_attn_2_type"] = "torch_sdpa"
 
         # Force single-process configuration if running in world_size=1
         # The error "cfg_p_size * seq_p_size == world_size" suggests these keys exist.
