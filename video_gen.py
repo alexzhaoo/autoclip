@@ -197,7 +197,7 @@ def _ensure_torch_distributed_initialized() -> None:
 
     # Prefer env:// if the user is explicitly running distributed.
     if os.getenv("RANK") is not None or os.getenv("WORLD_SIZE") is not None:
-        dist.init_process_group(backend=backend, init_method="env://")
+        # dist.init_process_group(backend=backend, init_method="env://")
         return
 
     # Otherwise initialize a local, single-process group.
@@ -215,12 +215,12 @@ def _ensure_torch_distributed_initialized() -> None:
     # Some backends use the temp dir for rendezvous artifacts.
     os.environ.setdefault("TORCH_EXTENSIONS_DIR", os.path.join(tempfile.gettempdir(), "torch_extensions"))
 
-    dist.init_process_group(
-        backend=backend,
-        init_method=f"tcp://127.0.0.1:{port}",
-        rank=0,
-        world_size=1,
-    )
+    # dist.init_process_group(
+    #     backend=backend,
+    #     init_method=f"tcp://127.0.0.1:{port}",
+    #     rank=0,
+    #     world_size=1,
+    # )
 
 
 def _maybe_patch_lightx2v_config_json(
