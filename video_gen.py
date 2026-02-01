@@ -266,6 +266,22 @@ def _maybe_patch_lightx2v_config_json(
         # Force/override rope_type so config_json can't silently select flashinfer.
         cfg["rope_type"] = rope_type
 
+        # Force single-process configuration if running in world_size=1
+        # The error "cfg_p_size * seq_p_size == world_size" suggests these keys exist.
+        if cfg.get("cfg_p_size", 1) > 1:
+             print(f"[WAN22] Overriding cfg_p_size={cfg['cfg_p_size']} -> 1 for single-GPU usage", flush=True)
+             cfg["cfg_p_size"] = 1
+        
+        if cfg.get("seq_p_size", 1) > 1:
+             print(f"[WAN22] Overriding seq_p_size={cfg['seq_p_size']} -> 1 for single-GPU usage", flush=True)
+             cfg["seq_p_size"] = 1
+
+        # Also cover other potential parallelism keys to be safe
+        for key in ["ulysses_size", "ring_degree", "text_parallel_size"]:
+             if cfg.get(key, 1) > 1:
+                 print(f"[WAN22] Overriding {key}={cfg[key]} -> 1", flush=True)
+                 cfg[key] = 1
+
         # Required by Wan22StepDistillScheduler in LightX2V.
         cfg.setdefault("denoising_step_list", list(distill_config.denoising_step_list))
 
