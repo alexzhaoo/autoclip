@@ -552,7 +552,6 @@ def extract_clips(transcript, var ,max_clips=2):
 
     response = client.chat.completions.create(
         model="gpt-5-mini-2025-08-07",
-        temperature=0.5,
         messages=[ 
             {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": prompt}
