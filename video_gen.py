@@ -109,7 +109,7 @@ class LTX2FastGenerator:
             total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
             print(f"[LTX-2] GPU VRAM: {total_gb:.1f}GB")
             
-            if total_gb >= 40:
+            if total_gb >= 38:  # A100 reports ~39.4GB, use 38GB threshold
                 print(f"[LTX-2] ✅ 40GB+ VRAM detected! Running fully on GPU (no CPU offload).")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=False)
@@ -126,7 +126,7 @@ class LTX2FastGenerator:
                         enable_vae_slicing=config.enable_vae_slicing,
                         enable_model_cpu_offload=False,  # Keep on GPU!
                     )
-            elif total_gb < 40 and not (config and config.enable_model_cpu_offload):
+            elif total_gb < 38 and not (config and config.enable_model_cpu_offload):
                 print(f"[LTX-2] WARNING: LTX-2 needs ~35GB VRAM. You have {total_gb:.1f}GB.")
                 print(f"[LTX-2] Auto-enabling CPU offload for compatibility...")
                 if config is None:
@@ -187,27 +187,23 @@ class LTX2FastGenerator:
         print(f"[LTX-2] CPU offload: {self.config.enable_model_cpu_offload}", flush=True)
         _log_cuda_memory("before pipeline load")
         
-        # Determine dtype based on config
-        dtype = torch.float16 if self.config.use_fp16 else torch.bfloat16
+        # Determine dtype based on GPU capability
+        # LTX-2 VAE has numerical instability in FP16, use bfloat16 when possible
+        gpu_name = torch.cuda.get_device_name(0).lower() if torch.cuda.is_available() else ""
+        has_native_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
         
-        # Load pipeline
+        if has_native_bf16:
+            # bfloat16 has better numerical stability for LTX-2 VAE
+            dtype = torch.bfloat16
+            print(f"[LTX-2] Using bfloat16 for numerical stability", flush=True)
+        else:
+            dtype = torch.float16
+            print(f"[LTX-2] Using float16 (bfloat16 not supported)", flush=True)
+        
+        # Load pipeline - LTX-2 doesn't use fp16 variant, load directly
         load_kwargs = {
             "torch_dtype": dtype,
         }
-        
-        # Only add variant if the model supports it
-        try:
-            test_load = LTX2Pipeline.from_pretrained(
-                self.model_id,
-                torch_dtype=dtype,
-                variant="fp16",
-                subfolder="",
-            )
-            del test_load
-            load_kwargs["variant"] = "fp16"
-            print("[LTX-2] Using fp16 variant", flush=True)
-        except Exception:
-            print("[LTX-2] Model doesn't have fp16 variant, using default", flush=True)
         
         if self.cache_dir is not None:
             load_kwargs["cache_dir"] = str(self.cache_dir)
@@ -237,6 +233,7 @@ class LTX2FastGenerator:
         _log_cuda_memory("after pipeline load")
         
         # Enable CPU offload BEFORE moving to device (this is key!)
+        print(f"[LTX-2] enable_model_cpu_offload config value: {self.config.enable_model_cpu_offload}", flush=True)
         if self.config.enable_model_cpu_offload:
             print("[LTX-2] Enabling sequential CPU offload (saves VRAM)...", flush=True)
             try:
@@ -253,7 +250,9 @@ class LTX2FastGenerator:
                     self.pipe = self.pipe.to(self.device)
         else:
             # Only move to device if not using CPU offload
+            print(f"[LTX-2] Moving pipeline to {self.device} (no CPU offload)...", flush=True)
             self.pipe = self.pipe.to(self.device)
+            print(f"[LTX-2] Pipeline moved to {self.device}", flush=True)
         
         # Enable VAE slicing (always try this)
         if self.config.enable_vae_slicing:
@@ -264,6 +263,10 @@ class LTX2FastGenerator:
                 print(f"[WARN] VAE slicing failed: {e}", flush=True)
         
         _log_cuda_memory("after optimizations")
+        
+        # Debug: check if model is actually on CUDA
+        if hasattr(self.pipe, 'transformer') and hasattr(self.pipe.transformer, 'device'):
+            print(f"[LTX-2] Transformer device: {self.pipe.transformer.device}", flush=True)
         
         # Store export function
         self._export_to_video = export_to_video
@@ -353,6 +356,14 @@ class LTX2FastGenerator:
             
             video_frames = result.frames[0]
             
+            # Validate output - check for NaN/Inf values that indicate numerical instability
+            import numpy as np
+            frames_array = np.array(video_frames)
+            if np.isnan(frames_array).any() or np.isinf(frames_array).any():
+                print("[LTX-2] ⚠️ Generated frames contain NaN/Inf values - numerical instability detected", flush=True)
+                print("[LTX-2] This usually happens with FP16 on certain GPUs. Retrying with bfloat16...", flush=True)
+                raise RuntimeError("Numerical instability: generated frames contain NaN/Inf values. Try using bfloat16 instead of FP16.")
+            
             # Export to video file
             if self._export_to_video is not None:
                 self._export_to_video(video_frames, str(output_path), fps=self.config.fps)
@@ -438,7 +449,7 @@ def create_ltx2_generator(
     import torch
     if torch.cuda.is_available():
         total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        use_cpu_offload = total_gb < 40  # Only use CPU offload if < 40GB
+        use_cpu_offload = total_gb < 38  # Only use CPU offload if < 38GB
     else:
         use_cpu_offload = True
     
@@ -450,7 +461,8 @@ def create_ltx2_generator(
         enable_vae_slicing=True,
     )
     
-    print(f"[LTX-2] Creating generator: {resolution} {aspect_ratio}, CPU offload enabled")
+    offload_status = "enabled" if use_cpu_offload else "disabled"
+    print(f"[LTX-2] Creating generator: {resolution} {aspect_ratio}, CPU offload: {offload_status}")
     
     return LTX2FastGenerator(config=config)
 
