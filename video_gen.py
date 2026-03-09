@@ -69,7 +69,7 @@ class LTX2Config:
     # Generation quality settings
     use_fp16: bool = True          # Use FP16 for faster inference
     enable_vae_slicing: bool = True  # Reduce VRAM usage for long videos
-    enable_model_cpu_offload: bool = True  # REQUIRED for <40GB VRAM GPUs
+    enable_model_cpu_offload: bool = True  # REQUIRED when running Whisper + LTX-2 together (even on 40GB GPUs)
 
 
 class LTX2FastGenerator:
@@ -109,8 +109,8 @@ class LTX2FastGenerator:
             total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
             print(f"[LTX-2] GPU VRAM: {total_gb:.1f}GB")
             
-            if total_gb >= 38:  # A100 reports ~39.4GB, use 38GB threshold
-                print(f"[LTX-2] ✅ 40GB+ VRAM detected! Running fully on GPU (no CPU offload).")
+            if total_gb >= 35:  # LTX-2 needs ~38GB, but 35GB threshold gives buffer
+                print(f"[LTX-2] ✅ {total_gb:.1f}GB VRAM detected! Running fully on GPU (no CPU offload).")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=False)
                 else:
@@ -126,9 +126,9 @@ class LTX2FastGenerator:
                         enable_vae_slicing=config.enable_vae_slicing,
                         enable_model_cpu_offload=False,  # Keep on GPU!
                     )
-            elif total_gb < 38 and not (config and config.enable_model_cpu_offload):
-                print(f"[LTX-2] WARNING: LTX-2 needs ~35GB VRAM. You have {total_gb:.1f}GB.")
-                print(f"[LTX-2] Auto-enabling CPU offload for compatibility...")
+            elif total_gb < 35 and not (config and config.enable_model_cpu_offload):
+                print(f"[LTX-2] WARNING: LTX-2 needs ~38GB VRAM. You have {total_gb:.1f}GB.")
+                print(f"[LTX-2] Using sequential CPU offload (generation will be slower).")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=True)
                 else:
@@ -449,7 +449,7 @@ def create_ltx2_generator(
     import torch
     if torch.cuda.is_available():
         total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        use_cpu_offload = total_gb < 38  # Only use CPU offload if < 38GB
+        use_cpu_offload = total_gb < 35  # Use CPU offload only if < 35GB (LTX-2 needs ~38GB)
     else:
         use_cpu_offload = True
     

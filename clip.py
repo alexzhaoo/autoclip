@@ -199,16 +199,28 @@ elevenlabs = ElevenLabs(
   api_key= os.getenv("ELEVENLABS_API_KEY"),
 )
 
-# Initialize B-roll pipeline
+# B-roll pipeline - initialized AFTER transcription to avoid OOM
+# (Whisper uses ~2-4GB, LTX-2 uses ~38GB, can't both fit on 40GB GPU)
 broll_pipeline = None
-if BROLL_AVAILABLE:
+broll_pipeline_initialized = False
+
+def init_broll_pipeline():
+    """Initialize B-roll pipeline after Whisper is unloaded."""
+    global broll_pipeline, broll_pipeline_initialized, BROLL_AVAILABLE
+    if broll_pipeline_initialized or not BROLL_AVAILABLE:
+        return broll_pipeline
+    
     try:
         from production_broll import create_production_pipeline
+        print("🎬 Initializing B-roll pipeline (LTX-2)...")
         broll_pipeline = create_production_pipeline()
+        broll_pipeline_initialized = True
         print("✅ B-roll pipeline initialized")
+        return broll_pipeline
     except Exception as e:
         print(f"⚠️ B-roll pipeline initialization failed: {e}")
         BROLL_AVAILABLE = False
+        return None
 
 # Initialize Whisper model with device detection
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -387,6 +399,18 @@ def transcribe(video_path):
     segments_path = os.path.join(TRANSCRIPTS_DIR, "segments.json")
     with open(segments_path, "w", encoding="utf-8") as f:
         json.dump(segments_list, f, indent=2, ensure_ascii=False)
+    
+    # 6. Unload Whisper model to free VRAM for LTX-2
+    print("   🧹 Unloading Whisper model to free VRAM...")
+    global model
+    del model
+    model = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        mem_freed = torch.cuda.memory_allocated() / 1024**3
+        print(f"   💾 VRAM after cleanup: {mem_freed:.2f}GB")
+    print("   ✅ Whisper unloaded - VRAM ready for B-roll generation")
 
     return transcript_text.strip(), segments_list
 
@@ -1833,7 +1857,9 @@ def convert_clip_format_for_broll(clip, segments):
 
 def generate_broll_for_clip(clip, segments, clip_index):
     """Generate B-roll for a single clip and return timing information"""
-    if not BROLL_AVAILABLE or not broll_pipeline:
+    # Initialize B-roll pipeline on first use (after Whisper is unloaded)
+    pipeline = init_broll_pipeline()
+    if not BROLL_AVAILABLE or not pipeline:
         return []
     
     print(f"\n🎬 Analyzing B-roll opportunities for clip {clip_index}: {clip['hook'][:50]}...")
@@ -1863,7 +1889,7 @@ def generate_broll_for_clip(clip, segments, clip_index):
             broll_path = os.path.join(BROLL_DIR, broll_filename)
             
             # Generate the B-roll video
-            generator = broll_pipeline.generator
+            generator = pipeline.generator
             success = generator.generate_broll_video(region.prompt, region.duration, broll_path)
 
             if success:
