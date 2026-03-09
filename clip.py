@@ -275,6 +275,8 @@ def detect_cuda_availability():
         return False
 
 def transcribe(video_path):
+    global model  # Declare at start so we can delete it later to free VRAM
+    
     print(f"\n🎤 --- TRANSCRIPTION START: {os.path.basename(video_path)} ---")
     
     import time
@@ -402,7 +404,6 @@ def transcribe(video_path):
     
     # 6. Unload Whisper model to free VRAM for LTX-2
     print("   🧹 Unloading Whisper model to free VRAM...")
-    global model
     del model
     model = None
     gc.collect()
