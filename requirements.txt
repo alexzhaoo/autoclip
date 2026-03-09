@@ -9,7 +9,10 @@ nvidia-cublas-cu12
 nvidia-cudnn-cu12>=9.1,<10
 # Core dependencies
 opencv-python>=4.9.0.80
-diffusers>=0.31.0
+
+# LTX-2 requires newer diffusers
+diffusers>=0.32.0
+
 # Newer diffusers PEFT loader expects `transformers.modeling_layers`.
 # Keep this reasonably modern; avoid tight upper-bounds that break over time.
 transformers>=4.52,<4.53
@@ -42,9 +45,7 @@ elevenlabs>=0.2.0
 nltk>=3.8.0
 
 # AI/ML for B-roll generation
-# (Already required above; keep here only for readability)
 pillow>=10.0.0
-diffusers[torch]>=0.18.0
 
 # Web requests
 requests>=2.31.0
@@ -59,14 +60,14 @@ decord
 librosa
 peft
 
-# LightX2V Wan2.2 T2V 4-step distill backend
-# (Installed from GitHub; used by video_gen.py)
-lightx2v @ git+https://github.com/ModelTC/LightX2V.git
+# LTX-2 Video Generation (via Diffusers)
+# Model: Lightricks/LTX-2 from HuggingFace
+# Requires: huggingface-cli login
+einops  # Required for LTX-2 model operations
 
-# Hugging Face download tooling used by setup_wan.sh
-# Keep <1.0 for compatibility with transformers/tokenizers currently pinned above.
+# Hugging Face download tooling
 huggingface_hub<1.0
 hf_transfer
 
-# Common model file format dependency (often pulled transitively, but keep explicit)
+# Common model file format dependency
 safetensors>=0.4.0

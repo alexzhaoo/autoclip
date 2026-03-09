@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
+"""Production B-roll pipeline with LTX-2 Fast video generation.
 
+This module provides a complete pipeline for analyzing video content,
+identifying B-roll opportunities with GPT, and generating high-quality
+B-roll videos using Lightricks' LTX-2 Fast model.
+"""
 
 import os
 import json
-import subprocess
-import requests
-import tempfile
-import shutil
-from pathlib import Path
 import traceback
-from typing import List, Dict, Optional, Tuple
+from pathlib import Path
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 from openai import OpenAI
 import time
@@ -19,6 +20,7 @@ try:
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
+
 
 @dataclass
 class BRollRegion:
@@ -30,6 +32,7 @@ class BRollRegion:
     confidence: float
     prompt: Optional[str] = None
     broll_path: Optional[str] = None
+
 
 class ProductionBRollAnalyzer:
     """Enhanced B-roll analyzer with GPT integration"""
@@ -72,7 +75,7 @@ class ProductionBRollAnalyzer:
         
         Args:
             regions: List of B-roll regions to filter
-            min_spacing: Minimum seconds between B-roll placements (default 2.0, was 3.0)
+            min_spacing: Minimum seconds between B-roll placements (default 2.0)
         """
         if not regions:
             return regions
@@ -84,9 +87,9 @@ class ProductionBRollAnalyzer:
         last_broll_time = -min_spacing  # Allow B-roll at start
         
         for region in sorted_regions:
-            # Check spacing constraint (reduced from 3s to 2s for more placements)
+            # Check spacing constraint
             if region.start_time - last_broll_time >= min_spacing:
-                # Constrain duration to 1-3 seconds (increased max from 2s to 3s)
+                # Constrain duration to 1-3 seconds
                 max_duration = min(3.0, region.duration)
                 constrained_region = BRollRegion(
                     start_time=region.start_time,
@@ -99,7 +102,7 @@ class ProductionBRollAnalyzer:
                 
                 filtered.append(constrained_region)
                 last_broll_time = region.start_time
-                print(f"    ✅ Kept B-roll at {region.start_time:.1f}s (spacing: {region.start_time - (last_broll_time if filtered else -min_spacing):.1f}s)")
+                print(f"    ✅ Kept B-roll at {region.start_time:.1f}s")
             else:
                 spacing = region.start_time - last_broll_time
                 print(f"    ⏭️  Filtered out B-roll at {region.start_time:.1f}s (spacing {spacing:.1f}s < {min_spacing:.1f}s)")
@@ -107,7 +110,7 @@ class ProductionBRollAnalyzer:
         return filtered
     
     def _analyze_chunk_with_gpt(self, chunk: List[Dict]) -> List[BRollRegion]:
-        """Analyze a chunk of segments with GPT-4"""
+        """Analyze a chunk of segments with GPT"""
         # Create transcript with timing information
         chunk_start = chunk[0].get("start", 0) if chunk else 0
         chunk_end = chunk[-1].get("end", 0) if chunk else 0
@@ -115,27 +118,21 @@ class ProductionBRollAnalyzer:
         # Build transcript with word-level timestamps for precise alignment
         transcript_lines = []
         for seg in chunk:
-            # Use word-level timestamps if available for better precision
             if "words" in seg and seg["words"] and len(seg["words"]) > 0:
-                # Format: show first word timestamp, then words, then last word timestamp
-                # This is cleaner than timestamp on every word
                 first_word_time = seg["words"][0].get("start", 0)
                 last_word_time = seg["words"][-1].get("end", 0)
                 words_text = " ".join([w.get("word", "") for w in seg["words"]])
                 transcript_lines.append(f"[{first_word_time:.2f}s - {last_word_time:.2f}s] {words_text}")
             else:
-                # Fallback to segment-level if words not available
                 seg_start = seg.get("start", 0)
                 seg_end = seg.get("end", 0)
                 seg_text = seg.get("text", "")
                 transcript_lines.append(f"[{seg_start:.2f}s - {seg_end:.2f}s] {seg_text}")
         
         transcript_with_timing = "\n".join(transcript_lines)
-        
-        # Create clean transcript for context
         clean_transcript = " ".join([seg.get("text", "").strip() for seg in chunk])
 
-        # Enhanced prompt optimized for Wan2.2 generation with precise timing alignment
+        # Enhanced prompt optimized for LTX-2 generation
         prompt = f"""
             Analyze this video transcript and identify 3 short B-roll opportunities (2-4 seconds) that enhance viewer engagement.
             
@@ -146,61 +143,58 @@ class ProductionBRollAnalyzer:
             {transcript_with_timing}
             
             CRITICAL TIMING RULES:
-            1. START_TIME must be within the time ranges shown above (e.g., if you see [2.54s - 5.32s], choose any time between 2.54 and 5.32)
-            2. END_TIME must be 2-4 seconds after START_TIME and fall within or end at a phrase boundary
+            1. START_TIME must be within the time ranges shown above
+            2. END_TIME must be 2-4 seconds after START_TIME
             3. B-roll duration should be 2-4 seconds
             4. Choose the EXACT moment when the relevant word/phrase begins speaking
             5. Times must be between {chunk_start:.1f} and {chunk_end:.1f}
-            6. Choose moments where visuals would enhance understanding without disrupting the narrative flow
+            6. Choose moments where visuals would enhance understanding
             
             For each B-roll opportunity, provide:
 
             START_TIME – MUST be an exact timestamp from the TIMED TRANSCRIPT above (in seconds)
             END_TIME – MUST be a timestamp from the TIMED TRANSCRIPT above (in seconds)
-            VISUAL_PROMPT – vivid, cinematic (add the words "Symmetrical Composition" at the end of each prompt) 
+            VISUAL_PROMPT – vivid, cinematic (LTX-2 optimized)
             reason - why this clip fits and which transcript line it illustrates
 
-            Suggest clear, engaging visuals with DYNAMIC MOVEMENT that reflect the transcript's ideas, themes, or emotions.
-            IMPORTANT: Use the FULL CONTEXT to understand the meaning of split sentences. Do not generate clips for isolated fragments.
-            ALWAYS specify motion: camera movement (pan, tilt, zoom, dolly, tracking) AND/OR subject movement (flowing, rotating, walking, falling, rising, transforming).
+            Suggest clear, engaging visuals with DYNAMIC MOVEMENT.
+            IMPORTANT: Use the FULL CONTEXT to understand the meaning of split sentences.
+            ALWAYS specify motion: camera movement AND/OR subject movement.
             Ensure Symmetrical Composition where natural.
 
             Use diverse visual categories WITH MOTION:
             - Lifestyle & work: people walking, gesturing, objects being manipulated
-            - Technology: screens animating, data flowing, lights pulsing, interfaces transitioning
-            - Nature: wind blowing, water flowing, clouds drifting, leaves rustling, birds flying
-            - Creative processes: materials transforming, liquids mixing, brush strokes appearing
-            - Abstract: particles flowing, shapes morphing, waves rippling, energy radiating
+            - Technology: screens animating, data flowing, lights pulsing
+            - Nature: wind blowing, water flowing, clouds drifting
+            - Creative processes: materials transforming, liquids mixing
+            - Abstract: particles flowing, shapes morphing, waves rippling
 
-
-            Specify camera angle (e.g., close-up, wide, tracking), lighting, color, and textures.
-            Avoid: Overused visuals like generic close-ups of hands unless the transcript explicitly describes manual actions.
+            Specify camera angle, lighting, color, and textures.
+            Avoid: Generic close-ups of hands unless explicitly described.
 
             Example VISUAL_PROMPTs (NOTE THE MOTION VERBS):
-            Smooth aerial dolly shot gliding over a city at dusk, camera moving forward steadily, windows glowing, soft haze drifting, birds flying across symmetrical skyline.
-            Macro shot of vibrant ink droplets spreading and swirling dynamically through clear water, colors bleeding outward, symmetrical flow patterns forming and evolving.
-            Fluid tracking shot following a scientist walking through a bright lab, camera moving smoothly alongside, reflections shifting on glass panels, balanced composition.
-            Slow sweeping pan across rolling ocean waves under golden light, water continuously rippling, foam flowing forward, camera tilting gently, symmetrical horizon line.
+            Smooth aerial dolly shot gliding over a city at dusk, camera moving forward steadily, windows glowing, soft haze drifting, symmetrical skyline.
+            Macro shot of vibrant ink droplets spreading and swirling dynamically through clear water, colors bleeding outward, symmetrical flow patterns forming.
+            Fluid tracking shot following a scientist walking through a bright lab, camera moving smoothly alongside, reflections shifting on glass panels.
 
-
-        Return ONLY a JSON array:
-        [
-          {{
-            "start_time": 2.5,
-            "end_time": 5.0,
-            "visual_prompt": "detailed cinematic prompt here",
-            "reason": "brief reason here"
-          }}
-        ]
-        """
+            Return ONLY a JSON array:
+            [
+              {{
+                "start_time": 2.5,
+                "end_time": 5.0,
+                "visual_prompt": "detailed cinematic prompt here",
+                "reason": "brief reason here"
+              }}
+            ]
+            """
         
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4.1-2025-04-14",
+                model="gpt-5-mini-2025-08-07",
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are an expert video editor specializing in engaging short-form content and AI video generation. You create detailed, cinematic prompts optimized for Wan2.2 text-to-video generation across diverse visual categories including scientific, abstract, nature, lifestyle, technology, and artistic themes."
+                        "content": "You are an expert video editor specializing in engaging short-form content and AI video generation. You create detailed, cinematic prompts optimized for LTX-2 text-to-video generation across diverse visual categories including scientific, abstract, nature, lifestyle, technology, and artistic themes."
                     },
                     {"role": "user", "content": prompt}
                 ]
@@ -213,11 +207,10 @@ class ProductionBRollAnalyzer:
             return []
     
     def _parse_gpt_response(self, response: str, chunk: List[Dict]) -> List[BRollRegion]:
-        """Parse GPT response and validate timestamps align with segment boundaries"""
+        """Parse GPT response and validate timestamps"""
         try:
-            # Extract JSON from response
             import re
-            json_match = re.search(r'\[.*\]', response, re.DOTALL)
+            json_match = re.search(r'\[.*?\]', response, re.DOTALL)
             if not json_match:
                 print("    ⚠️ No JSON array found in GPT response")
                 return []
@@ -225,64 +218,43 @@ class ProductionBRollAnalyzer:
             broll_data = json.loads(json_match.group())
             regions = []
             
-            # Build list of valid word and segment boundaries for validation
+            # Build list of valid boundaries for validation
             valid_times = set()
             for seg in chunk:
                 valid_times.add(seg.get("start", 0))
                 valid_times.add(seg.get("end", 0))
-                # Add word-level timestamps
-                if "words" in seg and seg["words"] and len(seg["words"]) > 0:
+                if "words" in seg and seg["words"]:
                     for word in seg["words"]:
                         valid_times.add(word.get("start", 0))
                         valid_times.add(word.get("end", 0))
             valid_times = sorted(list(valid_times))
-            
-            # Ensure we have at least chunk boundaries
-            if not valid_times:
-                valid_times = [chunk_start, chunk_end]
             
             for item in broll_data:
                 try:
                     start_time = item["start_time"]
                     end_time = item["end_time"]
                     
-                    # Validate timestamps are reasonable
                     chunk_start = chunk[0].get("start", 0) if chunk else 0
                     chunk_end = chunk[-1].get("end", 0) if chunk else 0
                     
                     if start_time < chunk_start or end_time > chunk_end:
-                        print(f"    ⚠️ Skipping B-roll with out-of-range times: {start_time:.1f}s-{end_time:.1f}s (chunk: {chunk_start:.1f}s-{chunk_end:.1f}s)")
+                        print(f"    ⚠️ Skipping B-roll with out-of-range times")
                         continue
                     
                     if end_time <= start_time:
-                        print(f"    ⚠️ Skipping B-roll with invalid duration: {start_time:.1f}s-{end_time:.1f}s")
+                        print(f"    ⚠️ Skipping B-roll with invalid duration")
                         continue
-                    
-                    # Snap to nearest word/segment boundaries (within 0.3s tolerance for word precision)
-                    def snap_to_boundary(time, boundaries, tolerance=0.3):
-                        closest = min(boundaries, key=lambda x: abs(x - time))
-                        if abs(closest - time) <= tolerance:
-                            return closest
-                        return time
-                    
-                    original_start = start_time
-                    original_end = end_time
-                    start_time = snap_to_boundary(start_time, valid_times)
-                    end_time = snap_to_boundary(end_time, valid_times)
-                    
-                    if start_time != original_start or end_time != original_end:
-                        print(f"    🔧 Adjusted timing: {original_start:.2f}s-{original_end:.2f}s → {start_time:.2f}s-{end_time:.2f}s (snapped to word boundaries)")
                     
                     region = BRollRegion(
                         start_time=start_time,
                         end_time=end_time,
                         duration=end_time - start_time,
                         reason=item["reason"],
-                        confidence=0.9,  # High confidence for GPT suggestions
+                        confidence=0.9,
                         prompt=item["visual_prompt"]
                     )
                     regions.append(region)
-                    print(f"    📍 B-roll at {start_time:.1f}s-{end_time:.1f}s ({region.duration:.1f}s): {item['reason'][:50]}")
+                    print(f"    📍 B-roll at {start_time:.1f}s-{end_time:.1f}s ({region.duration:.1f}s)")
                 except KeyError as e:
                     print(f"    ⚠️ Missing field in GPT response: {e}")
                     continue
@@ -296,295 +268,139 @@ class ProductionBRollAnalyzer:
             print(f"    ❌ Error parsing GPT response: {e}")
             return []
 
-class Wan22VideoGenerator:
-    """Wan2.2 video generator with multiple model support"""
+
+class LTX2VideoGenerator:
+    """LTX-2 Fast video generator for B-roll production."""
     
-    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "16:9"):
-        self.wan22_path = wan22_path or os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2")
-        self.model_type = model_type
+    def __init__(
+        self,
+        resolution: str = "480p",
+        aspect_ratio: str = "16:9",
+        fast_mode: bool = True,
+    ):
+        """Initialize LTX-2 video generator.
+        
+        Args:
+            resolution: One of "480p", "720p", "1080p"
+            aspect_ratio: "16:9" or "9:16"
+            fast_mode: Use faster generation settings
+        """
+        from video_gen import create_ltx2_generator
+        
+        self.resolution = resolution
         self.aspect_ratio = aspect_ratio
         
-        # ti2v-5B model configuration with dynamic aspect ratio support
-        if aspect_ratio == "9:16":
-            size = "704*1280"    # 9:16 portrait for TikTok/Reels
-            aspect_desc = "9:16 portrait"
-        else:
-            size = "704*1280"    # 16:9 landscape (matches your working command)
-            aspect_desc = "16:9 landscape"
-        
-        self.model_config = {
-            "task": "ti2v-5B",
-            "size": size,
-            "min_vram": 24,
-            "description": f"Text/Image-to-video, 5B parameters, RTX 4090 compatible, {aspect_desc}"
-        }
-        
-        # Validate Wan2.2 installation
         try:
-            self.wan22_available = self._validate_wan22_installation()
+            self._gen = create_ltx2_generator(
+                resolution=resolution,
+                aspect_ratio=aspect_ratio,
+                fast_mode=fast_mode,
+            )
+            print(f"🎬 LTX-2 Video Generator ready:")
+            print(f"  - Resolution: {resolution} ({aspect_ratio})")
+            print(f"  - Fast mode: {fast_mode}")
+            print(f"  - Model: Lightricks/LTX-2")
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            if "authentication" in error_msg or "401" in str(e):
+                print("\n❌ HuggingFace authentication failed!")
+                print("   Fix: huggingface-cli login")
+                print("   Or:  export HF_TOKEN='your-token'")
+            elif "diffusers" in error_msg and "upgrade" in error_msg:
+                print("\n❌ diffusers version issue!")
+                print("   Fix: pip install -U diffusers>=0.32.0")
+            raise
         except Exception as e:
-            raise RuntimeError(f"Wan2.2 validation failed: {e}")
-        
-        print("🎬 Wan2.2 Video Generator ready:")
-        print(f"  - Wan2.2 path: {self.wan22_path}")
-        print(f"  - Model: {model_type} ({self.model_config['description']})")
-        print("  - Wan2.2 validated: ✅")
-    
-    def _validate_wan22_installation(self) -> bool:
-        """Validate Wan2.2 installation and model availability"""
-        try:
-            # Check if Wan2.2 directory exists
-            wan22_dir = Path(self.wan22_path)
-            if not wan22_dir.exists():
-                raise FileNotFoundError(f"Wan2.2 directory not found: {self.wan22_path}")
-            
-            # Check if generate.py exists
-            generate_script = wan22_dir / "generate.py"
-            if not generate_script.exists():
-                raise FileNotFoundError(f"generate.py not found in {self.wan22_path}")
-            
-            # Check if ti2v-5B model directory exists
-            workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
-            model_dir = workspace_dir / "Wan2.2-TI2V-5B"
-            if not model_dir.exists():
-                raise FileNotFoundError(f"Model directory not found: {model_dir}. Please download the ti2v-5B model to {model_dir}")
-            
-            print("✅ Wan2.2 installation validated: ti2v-5B")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Error validating Wan2.2 installation: {e}")
-            raise  # Re-raise the exception instead of returning False
+            raise RuntimeError(f"Failed to initialize LTX-2 generator: {e}")
     
     def generate_broll_video(self, prompt: str, duration: float, output_path: str) -> bool:
-        """Generate B-roll video with Wan2.2"""
+        """Generate B-roll video with LTX-2.
+        
+        Args:
+            prompt: Visual description for the B-roll
+            duration: Target duration in seconds
+            output_path: Where to save the video
+            
+        Returns:
+            True if successful, False otherwise
+        """
         print(f"🎬 Generating B-roll: {prompt[:60]}... ({duration:.1f}s)")
         
-        print(f"  🌟 Using Wan2.2 {self.model_type} generation...")
-        return self._generate_with_wan22(prompt, duration, output_path)
-    
-    def _generate_with_wan22(self, prompt: str, duration: float, output_path: str) -> bool:
-        """Generate video using Wan2.2 ti2v-5B model"""
         try:
-            config = self.model_config
-            
-            # Model is in workspace root, not inside Wan2.2 directory
-            workspace_dir = Path("/workspace") if os.path.exists("/workspace") else Path(".")
-            model_dir = workspace_dir / "Wan2.2-TI2V-5B"
-            
-            # Create output directory if it doesn't exist
-            output_dir = Path(output_path).parent
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Build Wan2.2 command matching your working configuration
-            cmd = [
-                "python", 
-                str(Path(self.wan22_path) / "generate.py"),
-                "--task", config["task"],
-                "--size", config["size"],
-                "--ckpt_dir", str(model_dir),
-                # "--offload_model", "True",
-                # "--convert_model_dtype", 
-                # "--t5_cpu",
-                "--prompt", prompt
-            ]
-            
-            # For RTX 5090 (24GB+), keep T5 on GPU for better performance
-            # Only use t5_cpu if you have memory issues
-            # if self.model_type == "ti2v-5B":
-            #     cmd.extend(["--t5_cpu"])
-            
-            # Add prompt extension if API key is available
-            dash_api_key = os.getenv("DASH_API_KEY")
-            if dash_api_key:
-                cmd.extend([
-                    "--use_prompt_extend",
-                    "--prompt_extend_method", "dashscope"
-                ]) 
-            
-            print(f"    🔧 Running: {' '.join(cmd[:6])}... (full command with {len(cmd)} args)")
-            print(f"    📂 Working directory: {self.wan22_path}")
-            
-            # Record existing MP4 files before generation to identify new ones
-            wan22_dir = Path(self.wan22_path)
-            existing_files = set()
-            
-            # Check multiple possible output locations
-            search_dirs = [
-                wan22_dir,  # Main Wan2.2 directory
-                wan22_dir / "output",  # Common output subdirectory 
-                wan22_dir / "outputs",  # Alternative output subdirectory
-                wan22_dir / "generated",  # Alternative output subdirectory
-            ]
-            
-            for search_dir in search_dirs:
-                if search_dir.exists():
-                    existing_files.update(search_dir.glob("**/*.mp4"))
-            
-            print(f"    📊 Found {len(existing_files)} existing MP4 files before generation")
-            
-            # Set environment
-            env = os.environ.copy()
-            env["PYTHONPATH"] = self.wan22_path
-            if dash_api_key:
-                env["DASH_API_KEY"] = dash_api_key
-            
-            print("    ⏳ Starting Wan2.2 generation (model loading may take 30-120 seconds)...")
-            start_time = time.time()
-            
-            # Run generation and capture output for better error reporting
-            result = subprocess.run(
-                cmd,
-                cwd=self.wan22_path,
-                env=env,
-                capture_output=True,  # Capture output for error reporting
-                text=True,
-                timeout=1500  # 25 minute timeout
+            self._gen.generate_broll_for_region(
+                prompt=prompt,
+                duration=duration,
+                output_path=output_path,
             )
-            
-            elapsed_time = time.time() - start_time
-            print(f"    ⏱️ Generation process completed in {elapsed_time:.1f} seconds (exit code: {result.returncode})")
-            
-            if result.returncode == 0:
-                # Find new MP4 files created during generation
-                new_files = set()
-                for search_dir in search_dirs:
-                    if search_dir.exists():
-                        new_files.update(search_dir.glob("**/*.mp4"))
-                
-                generated_files = list(new_files - existing_files)
-                
-                print(f"    🔍 Found {len(generated_files)} new MP4 files after generation")
-                for f in generated_files:
-                    file_size = f.stat().st_size if f.exists() else 0
-                    print(f"        📹 {f} ({file_size/1024:.1f}KB)")
-                
-                if generated_files:
-                    # Get the most recent video file
-                    latest_video = max(generated_files, key=lambda p: p.stat().st_mtime)
-                    
-                    print(f"    📁 Using latest generated file: {latest_video}")
-                    
-                    # Move to desired output path
-                    try:
-                        shutil.move(str(latest_video), output_path)
-                        print(f"    📦 Moved file to: {output_path}")
-                    except Exception as e:
-                        # If move fails, try copy instead
-                        try:
-                            shutil.copy2(str(latest_video), output_path)
-                            print(f"    📦 Copied file to: {output_path}")
-                            # Try to remove original after successful copy
-                            try:
-                                latest_video.unlink()
-                            except:
-                                pass  # Don't fail if we can't clean up
-                        except Exception as e2:
-                            raise RuntimeError(f"Failed to move/copy generated video from {latest_video} to {output_path}: {e2}")
-                    
-                    # Verify file exists and has content
-                    if not os.path.exists(output_path):
-                        raise RuntimeError(f"Output file was not created at {output_path}")
-                    
-                    file_size = os.path.getsize(output_path)
-                    if file_size <= 10000:  # At least 10KB
-                        raise RuntimeError(f"Generated file too small ({file_size} bytes) - likely corrupted or generation failed")
-                    
-                    print(f"  ✅ Wan2.2 B-roll generated successfully: {output_path} ({file_size/1024:.1f}KB)")
-                    return True
-                else:
-                    # No new files found - provide detailed debugging info
-                    print(f"    ❌ No new MP4 files found after generation!")
-                    print(f"    🔍 Searched directories:")
-                    for search_dir in search_dirs:
-                        if search_dir.exists():
-                            all_files = list(search_dir.glob("**/*"))
-                            mp4_files = list(search_dir.glob("**/*.mp4"))
-                            print(f"        📂 {search_dir}: {len(all_files)} total files, {len(mp4_files)} MP4 files")
-                        else:
-                            print(f"        📂 {search_dir}: (doesn't exist)")
-                    
-                    raise RuntimeError(f"No new MP4 files found in expected directories after successful generation")
-            else:
-                error_msg = f"Wan2.2 generation failed (exit code {result.returncode})"
-                if result.stderr:
-                    error_msg += f"\nSTDERR: {result.stderr}"
-                if result.stdout:
-                    error_msg += f"\nSTDOUT: {result.stdout}"
-                print(f"    ❌ {error_msg}")
-                raise RuntimeError(error_msg)
-                
-        except subprocess.TimeoutExpired:
-            print("  ⏱️ Wan2.2 generation timed out")
-            return False
-        except Exception as e:
-            print(f"  ❌ Wan2.2 generation error: {e}")
-            return False
-
-
-class Wan22LightX2VVideoGenerator:
-    """Wan2.2 T2V 4-step distill generator via LightX2V (Dual-LoRA)."""
-
-    def __init__(self, models_dir: Optional[str] = None):
-        from video_gen import Wan22LightX2VGenerator
-
-        self._gen = Wan22LightX2VGenerator(models_dir=models_dir or os.getenv("WAN22_MODELS_DIR", "./models"))
-
-    def generate_broll_video(self, prompt: str, duration: float, output_path: str) -> bool:
-        try:
-            _ = duration
-            self._gen.generate_clip(prompt=prompt, output_path=output_path)
+            print(f"  ✅ Generated: {output_path}")
             return True
-        except Exception as e:
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            if "out of memory" in error_msg or "cuda" in error_msg:
+                print(f"  ❌ CUDA Out of Memory!")
+                print(f"      Try: export LTX2_RESOLUTION=480p")
+                print(f"      Or:  Use a GPU with more VRAM")
+            elif "authentication" in error_msg or "401" in str(e):
+                print(f"  ❌ HuggingFace authentication failed!")
+                print(f"      Run: huggingface-cli login")
+            else:
+                print(f"  ❌ LTX-2 generation error: {e}")
             import traceback
-
-            tb = traceback.format_exc()
-            print(f"  ❌ LightX2V generation error: {type(e).__name__}: {e}")
-            print(tb)
+            traceback.print_exc()
             return False
+        except Exception as e:
+            print(f"  ❌ LTX-2 generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+# Backwards compatibility aliases
+class Wan22VideoGenerator(LTX2VideoGenerator):
+    """Backwards compatibility wrapper. Redirects to LTX2VideoGenerator."""
+    
+    def __init__(self, *args, **kwargs):
+        print("[DEPRECATED] Wan22VideoGenerator is deprecated. Using LTX2VideoGenerator instead.", flush=True)
+        # Remove old Wan2.2 specific args
+        kwargs.pop("wan22_path", None)
+        kwargs.pop("model_type", None)
+        super().__init__(*args, **kwargs)
+
+
+class Wan22LightX2VVideoGenerator(LTX2VideoGenerator):
+    """Backwards compatibility wrapper. Redirects to LTX2VideoGenerator."""
+    
+    def __init__(self, *args, **kwargs):
+        print("[DEPRECATED] Wan22LightX2VVideoGenerator is deprecated. Using LTX2VideoGenerator instead.", flush=True)
+        kwargs.pop("models_dir", None)
+        super().__init__(*args, **kwargs)
+
 
 class ProductionBRollPipeline:
-    """Complete production B-roll pipeline with Wan2.2 integration"""
+    """Complete production B-roll pipeline with LTX-2 integration"""
     
-    def __init__(self, wan22_path: Optional[str] = None, model_type: str = "ti2v-5B", aspect_ratio: str = "16:9"):
+    def __init__(
+        self,
+        resolution: str = "480p",
+        aspect_ratio: str = "16:9",
+        fast_mode: bool = True,
+    ):
+        """Initialize the production pipeline.
+        
+        Args:
+            resolution: Video resolution (480p, 720p, 1080p)
+            aspect_ratio: "16:9" or "9:16"
+            fast_mode: Use faster generation settings
+        """
         self.analyzer = ProductionBRollAnalyzer()
-        self.generator = self._init_generator(wan22_path, model_type, aspect_ratio)
-        self.wan22_path = wan22_path
-        self.model_type = model_type
+        self.generator = LTX2VideoGenerator(
+            resolution=resolution,
+            aspect_ratio=aspect_ratio,
+            fast_mode=fast_mode,
+        )
+        self.resolution = resolution
         self.aspect_ratio = aspect_ratio
 
-    def _init_generator(self, wan22_path: Optional[str], model_type: str, aspect_ratio: str):
-        prefer_lightx2v = os.getenv("WAN22_BACKEND", "lightx2v").lower() == "lightx2v"
-        if prefer_lightx2v:
-            try:
-                print("🌟 Using LightX2V Wan2.2 T2V 4-step distill (Dual-LoRA) backend")
-                return Wan22LightX2VVideoGenerator()
-            except Exception as e:
-                tb = traceback.format_exc()
-                print(
-                    "⚠️ LightX2V backend unavailable, falling back to legacy Wan2.2 generate.py: "
-                    f"{type(e).__name__}: {e}\n{tb}"
-                )
-
-                # Only attempt legacy fallback if the Wan2.2 repo exists.
-                effective_wan22_path = wan22_path or os.getenv(
-                    "WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2"
-                )
-                try:
-                    if not Path(effective_wan22_path).exists():
-                        raise FileNotFoundError(f"Wan2.2 directory not found: {effective_wan22_path}")
-                except Exception as path_err:
-                    raise RuntimeError(
-                        "B-roll generation backend initialization failed. "
-                        "LightX2V failed to initialize, and legacy Wan2.2 fallback is unavailable. "
-                        f"LightX2V error: {e}. "
-                        f"Legacy check error: {path_err}. "
-                        "Fix options: (1) rerun ./setup_wan.sh and ensure 'python -c \"from lightx2v import LightX2VPipeline\"' works, "
-                        "or (2) set WAN22_BACKEND=legacy and clone Wan2.2 at WAN22_PATH."
-                    )
-
-        return Wan22VideoGenerator(wan22_path, model_type, aspect_ratio)
-    
     def process_clip(self, clip_data: Dict) -> bool:
         """Process a complete clip with B-roll generation"""
         print(f"\n🎬 Processing clip: {clip_data.get('hook', 'Unknown')[:50]}...")
@@ -650,7 +466,6 @@ class ProductionBRollPipeline:
                 for error in generation_errors:
                     print(f"  - {error}")
             
-            # Generate final composite video
             print(f"\n✅ Successfully generated {successful_generations}/{len(broll_regions)} B-roll videos")
             
             # Report results
@@ -667,67 +482,97 @@ class ProductionBRollPipeline:
             traceback.print_exc()
             return False
 
+
 # Configuration
 PRODUCTION_CONFIG = {
-    "wan22_path": os.getenv("WAN22_PATH", "/workspace/Wan2.2" if os.path.exists("/workspace") else "./Wan2.2"),
-    "model_type": os.getenv("WAN22_MODEL", "t2v-A14B"),
-    "aspect_ratio": os.getenv("BROLL_ASPECT_RATIO", "16:9"),  # Use 16:9 landscape since that's working
+    "resolution": os.getenv("LTX2_RESOLUTION", "480p"),
+    "aspect_ratio": os.getenv("LTX2_ASPECT_RATIO", "16:9"),
+    "fast_mode": os.getenv("LTX2_FAST_MODE", "true").lower() in ("true", "1", "yes"),
 }
 
-def create_production_pipeline() -> ProductionBRollPipeline:
-    """Factory function to create production B-roll pipeline with Wan2.2"""
+
+def create_production_pipeline(
+    resolution: Optional[str] = None,
+    aspect_ratio: Optional[str] = None,
+    fast_mode: Optional[bool] = None,
+) -> ProductionBRollPipeline:
+    """Factory function to create production B-roll pipeline with LTX-2.
+    
+    Args:
+        resolution: Video resolution (480p, 720p, 1080p, 4K)
+        aspect_ratio: "16:9" or "9:16"
+        fast_mode: Use faster generation settings
+        
+    Returns:
+        Configured ProductionBRollPipeline instance
+    """
     return ProductionBRollPipeline(
-        wan22_path=PRODUCTION_CONFIG["wan22_path"],
-        model_type=PRODUCTION_CONFIG["model_type"],
-        aspect_ratio=PRODUCTION_CONFIG["aspect_ratio"]
+        resolution=resolution or PRODUCTION_CONFIG["resolution"],
+        aspect_ratio=aspect_ratio or PRODUCTION_CONFIG["aspect_ratio"],
+        fast_mode=fast_mode if fast_mode is not None else PRODUCTION_CONFIG["fast_mode"],
     )
 
-def setup_wan22_environment():
-    """Helper function to set up Wan2.2 environment"""
-    print("🔧 Setting up Wan2.2 Environment")
+
+# Backwards compatibility
+# Keep old function name but redirect to new implementation
+create_production_pipeline_with_wan22 = create_production_pipeline
+
+
+def setup_ltx2_environment():
+    """Helper function to set up LTX-2 environment"""
+    print("🔧 Setting up LTX-2 Environment")
     print("=" * 50)
     
-    wan22_path = PRODUCTION_CONFIG["wan22_path"]
+    print("1. Install dependencies:")
+    print("   pip install diffusers>=0.32.0 transformers accelerate")
     
-    print(f"1. Clone Wan2.2 repository to: {wan22_path}")
-    print("   git clone https://github.com/Wan-Video/Wan2.2.git")
-    print("   cd Wan2.2")
-    print("   pip install -r requirements.txt")
-    
-    print("\n2. Download ti2v-5B model:")
-    print("   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B")
-    print("   (Requires ~24GB VRAM, works with RTX 4090)")
-    
-    print("\n3. Set environment variables:")
-    print(f"   export WAN22_PATH={wan22_path}")
-    print("   export WAN22_MODEL=ti2v-5B")
-    print("   export BROLL_ASPECT_RATIO=9:16  # Use 9:16 for TikTok/Reels, 16:9 for landscape")
+    print("\n2. Set environment variables:")
     print("   export OPENAI_API_KEY=your_openai_api_key")
-    print("   export DASH_API_KEY=your_dashscope_api_key  # Optional, for prompt extension")
+    print("   export LTX2_RESOLUTION=480p  # Options: 480p, 720p, 1080p, 4K")
+    print("   export LTX2_ASPECT_RATIO=16:9  # Options: 16:9, 9:16")
+    print("   export LTX2_FAST_MODE=true  # Use faster generation")
+    
+    print("\n3. Model will be auto-downloaded from HuggingFace on first use:")
+    print("   - Lightricks/LTX-2")
+    print("   - Requires HuggingFace CLI login: huggingface-cli login")
     
     print("\n4. Test installation:")
     print("   python -c \"from production_broll import create_production_pipeline; pipeline = create_production_pipeline()\"")
     
     print("\nRecommended GPU requirements:")
-    print("- RTX 4090 (24GB VRAM) or better for ti2v-5B model")
+    print("- RTX 4090 (24GB VRAM) for 720p and below")
+    print("- RTX 5090 / H100 for 1080p and 4K")
+    print("- Enable LTX2_FAST_MODE=true for faster generation")
+
+
+# Keep old function name for backwards compatibility
+setup_wan22_environment = setup_ltx2_environment
+
 
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Production B-roll Generator with Wan2.2 ti2v-5B")
+    parser = argparse.ArgumentParser(description="Production B-roll Generator with LTX-2 Fast")
     parser.add_argument("--setup", action="store_true", help="Show setup instructions")
+    parser.add_argument("--resolution", default="480p", help="Resolution: 480p, 720p, 1080p, 4K")
+    parser.add_argument("--aspect-ratio", default="16:9", help="Aspect ratio: 16:9 or 9:16")
+    parser.add_argument("--fast-mode", action="store_true", help="Enable fast mode")
     
     args = parser.parse_args()
     
     if args.setup:
-        setup_wan22_environment()
+        setup_ltx2_environment()
         exit(0)
     
-    print("🎬 Production B-roll System with Wan2.2 ti2v-5B")
+    print("🎬 Production B-roll System with LTX-2 Fast")
     print("=" * 50)
     
     try:
-        pipeline = create_production_pipeline()
+        pipeline = create_production_pipeline(
+            resolution=args.resolution,
+            aspect_ratio=args.aspect_ratio,
+            fast_mode=args.fast_mode,
+        )
         print("✅ Pipeline ready for production use")
         print("\nTo use this pipeline:")
         print("1. Import: from production_broll import create_production_pipeline")
@@ -741,5 +586,5 @@ if __name__ == "__main__":
         
     print("\n💡 Tips:")
     print("- Use --setup to see installation instructions")
-    print("- Set BROLL_ASPECT_RATIO=9:16 for TikTok/Reels (default)")
-    print("- Set DASH_API_KEY for enhanced prompt generation")
+    print("- Set LTX2_ASPECT_RATIO=9:16 for TikTok/Reels")
+    print("- Set LTX2_FAST_MODE=true for faster generation")

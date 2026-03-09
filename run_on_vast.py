@@ -51,7 +51,7 @@ def wait_for_running(instance_id):
 
 
 def setup_and_run(inst_details, video_input):
-    """Setup environment and run Wan2.2 pipeline"""
+    """Setup environment and run LTX-2 pipeline"""
     remote_outdir = "/workspace/output"
     ssh_port = inst_details["ssh_port"]
     ssh_host = inst_details["ssh_host"]
@@ -71,7 +71,7 @@ def setup_and_run(inst_details, video_input):
         video_arg = remote_video
         print(f"📁 Uploaded local file: {video_input}")
 
-    # Remote setup script
+    # Remote setup script for LTX-2
     setup_script = f"""
 set -e
 cd /workspace
@@ -93,11 +93,20 @@ cd /workspace/pipeline
 export OPENAI_API_KEY={OPENAI_KEY}
 export HF_TOKEN={HF_TOKEN}
 
-# Setup LightX2V + download Wan2.2 T2V A14B + Dual-LoRA into ./models/
-chmod +x ./setup_wan.sh
-./setup_wan.sh
+# Setup LTX-2 environment
+chmod +x ./setup_ltx2.sh
+./setup_ltx2.sh
 
 source /workspace/pipeline/.venv/bin/activate
+
+# Login to HuggingFace for LTX-2 model download
+if [ -n "{HF_TOKEN}" ]; then
+    echo "🔑 Logging into HuggingFace..."
+    huggingface-cli login --token {HF_TOKEN}
+else
+    echo "⚠️ Warning: HF_TOKEN not set. LTX-2 download may fail."
+    echo "   Set HF_TOKEN environment variable with your HuggingFace token."
+fi
 
 # Download NLTK data with multiple methods and fallbacks
 echo "📚 Downloading NLTK data..."
@@ -124,11 +133,11 @@ datasets = ['punkt', 'punkt_tab', 'stopwords']
 for dataset in datasets:
     try:
         nltk.download(dataset, download_dir=nltk_data_dir, quiet=False)
-        print(f'✅ Downloaded {dataset}')
+        print(f'✅ Downloaded {{dataset}}')
     except Exception as e:
-        print(f'⚠️ Failed to download {dataset}: {e}')
+        print(f'⚠️ Failed to download {{dataset}}: {{e}}')
 
-print(f'NLTK data path: {nltk.data.path}')
+print(f'NLTK data path: {{nltk.data.path}}')
 "
 
 # Set NLTK_DATA environment variable
@@ -138,8 +147,12 @@ export NLTK_DATA=/workspace/nltk_data
 echo "Testing YouTube download..."
 yt-dlp --print filename "https://www.youtube.com/watch?v=hCW2NHbWNwA&t=327s" || echo "YouTube download may fail"
 
-export WAN22_BACKEND=lightx2v
-export WAN22_MODELS_DIR=/workspace/pipeline/models
+# LTX-2 Configuration
+export LTX2_RESOLUTION=480p
+export LTX2_ASPECT_RATIO=16:9
+export LTX2_FAST_MODE=true
+export HF_HOME=/workspace/pipeline/models
+
 mkdir -p {remote_outdir}
 python /workspace/pipeline/clip.py --video "{video_arg}" --output_dir {remote_outdir}
 """
@@ -169,9 +182,24 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
         print("Usage: python run_on_vast.py <video_path_or_url>")
+        print("")
+        print("Environment variables:")
+        print("  VAST_API_KEY    - Required: Vast.ai API key")
+        print("  HF_TOKEN        - Required: HuggingFace token for LTX-2 download")
+        print("  OPENAI_API_KEY  - Required: OpenAI API key for GPT analysis")
+        print("  VAST_GPU_NAME   - Optional: GPU type (default: RTX_5090)")
+        print("  VAST_DISK_GB    - Optional: Disk size in GB (default: 200)")
         sys.exit(1)
 
     video_input = sys.argv[1]
+
+    # Check required environment variables
+    if not HF_TOKEN:
+        print("⚠️ Warning: HF_TOKEN not set. LTX-2 requires HuggingFace authentication.")
+        print("   Get your token from: https://huggingface.co/settings/tokens")
+        response = input("Continue anyway? (y/n): ")
+        if response.lower() != 'y':
+            sys.exit(1)
 
     try:
         print("🔗 Testing API connection...")

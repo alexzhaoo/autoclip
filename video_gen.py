@@ -1,8 +1,12 @@
+"""Video generation using LTX-2 Fast for B-roll production.
+
+This module provides a unified interface for generating B-roll video clips
+using Lightricks' LTX-2 Fast model via HuggingFace Diffusers.
+"""
+
 import json
-import inspect
 import os
 import random
-import socket
 import time
 import tempfile
 from dataclasses import dataclass
@@ -13,16 +17,15 @@ import torch
 
 
 def _log_cuda_memory(tag: str) -> None:
+    """Log current CUDA memory usage for debugging."""
     print(f"[CUDA] {tag}: logger called", flush=True)
-    # Default ON (prints only a couple lines during init). Opt-out with WAN22_DEBUG_CUDA=0/false.
-    if os.getenv("WAN22_DEBUG_CUDA", "1").strip().lower() in {"0", "false", "no", "n"}:
-        print(f"[CUDA] {tag}: disabled via WAN22_DEBUG_CUDA", flush=True)
+    if os.getenv("LTX2_DEBUG_CUDA", "1").strip().lower() in {"0", "false", "no", "n"}:
+        print(f"[CUDA] {tag}: disabled via LTX2_DEBUG_CUDA", flush=True)
         return
     if not torch.cuda.is_available():
         print(f"[CUDA] {tag}: cuda not available", flush=True)
         return
     try:
-        # Force lazy CUDA init so mem_get_info is meaningful.
         _ = torch.cuda.current_device()
         free_b, total_b = torch.cuda.mem_get_info()
         allocated_b = torch.cuda.memory_allocated()
@@ -39,619 +42,487 @@ def _log_cuda_memory(tag: str) -> None:
         print(f"[CUDA] {tag}: failed to query memory ({type(e).__name__}: {e})", flush=True)
 
 
-def _is_lightx2v_flash_attn_usable() -> bool:
-    """Return True if LightX2V's FlashAttention backend appears runnable.
-
-    LightX2V can import even when its flash-attn function pointers are None.
-    That later manifests as: TypeError: 'NoneType' object is not callable.
-    """
-
-    try:
-        import importlib
-
-        mod = importlib.import_module("lightx2v.common.ops.attn.flash_attn")
-        for name in ("flash_attn_varlen_func_v3", "flash_attn_varlen_func", "flash_attn_func"):
-            fn = getattr(mod, name, None)
-            if fn is not None:
-                return True
-        return False
-    except Exception:
-        return False
-
-
-def _probe_first_param_device(obj: object) -> None:
-    """Best-effort probe to see where weights actually live (CPU vs CUDA)."""
-
-    try:
-        import torch.nn as nn
-    except Exception:
-        return
-
-    seen: set[int] = set()
-
-    def walk(o: object, depth: int) -> Optional["torch.nn.Module"]:
-        if depth <= 0:
-            return None
-        oid = id(o)
-        if oid in seen:
-            return None
-        seen.add(oid)
-
-        if isinstance(o, nn.Module):
-            return o
-
-        d = getattr(o, "__dict__", None)
-        if not isinstance(d, dict):
-            return None
-
-        for v in d.values():
-            if isinstance(v, (str, int, float, bool, type(None))):
-                continue
-            m = walk(v, depth - 1)
-            if m is not None:
-                return m
-        return None
-
-    module = walk(obj, depth=6)
-    if module is None:
-        print("[CUDA] probe: could not find torch.nn.Module in pipeline", flush=True)
-        return
-
-    try:
-        p = next(module.parameters())
-        print(f"[CUDA] probe: first parameter device={p.device}, dtype={p.dtype}", flush=True)
-    except StopIteration:
-        print("[CUDA] probe: module has no parameters", flush=True)
-    except Exception as e:
-        print(f"[CUDA] probe: failed ({type(e).__name__}: {e})", flush=True)
-
-
-def _pipe_create_generator(pipe: object, **kwargs) -> None:
-    """Call LightX2V create_generator with best-effort device placement."""
-
-    create_fn = getattr(pipe, "create_generator")
-    if not torch.cuda.is_available():
-        create_fn(**kwargs)
-        return
-
-    # LightX2V's API has changed across versions. In some builds, signature
-    # introspection fails (or create_generator is wrapped), so we can't reliably
-    # detect supported kwargs. To keep the runner from initializing on CPU,
-    # we optimistically pass CUDA placement hints and fall back if rejected.
-    candidate_kwargs = dict(kwargs)
-    candidate_kwargs.setdefault("device", "cuda")
-    candidate_kwargs.setdefault("device_id", 0)
-    candidate_kwargs.setdefault("local_rank", 0)
-
-    try:
-        create_fn(**candidate_kwargs)
-        return
-    except TypeError:
-        # Retry after removing any unsupported placement kwargs.
-        # This keeps compatibility with older LightX2V versions.
-        stripped = dict(kwargs)
-        create_fn(**stripped)
-        return
-
-
-def _brute_force_move_lightx2v_to_cuda(pipe: object) -> None:
-    """Best-effort move of LightX2V internals to CUDA.
-
-    This is intentionally defensive: LightX2V object graphs vary by version.
-    """
-
-    if not torch.cuda.is_available():
-        print("[WAN22] BRUTE FORCE: CUDA not available", flush=True)
-        return
-
-    print("[WAN22] BRUTE FORCE: attempting to move pipeline internals to CUDA...", flush=True)
-
-    # 1) Try the wrapper itself.
-    to_fn = getattr(pipe, "to", None)
-    if callable(to_fn):
-        try:
-            to_fn("cuda")
-            print("[WAN22] BRUTE FORCE: pipe.to('cuda') succeeded", flush=True)
-        except Exception as e:
-            print(f"[WAN22] BRUTE FORCE: pipe.to('cuda') failed: {e}", flush=True)
-
-    # 2) Try common internal model attribute names.
-    possible_model_attrs = ["model", "transformer", "dit", "unet", "denoiser", "runner", "generator"]
-    moved_any = False
-    for attr in possible_model_attrs:
-        try:
-            if not hasattr(pipe, attr):
-                continue
-            sub = getattr(pipe, attr)
-            sub_to = getattr(sub, "to", None)
-            if callable(sub_to):
-                print(f"[WAN22] BRUTE FORCE: Found '{attr}', moving to CUDA...", flush=True)
-                sub_to("cuda")
-                moved_any = True
-        except Exception as e:
-            print(f"[WAN22] BRUTE FORCE: moving '{attr}' failed: {e}", flush=True)
-
-    if not moved_any:
-        print("[WAN22] BRUTE FORCE: WARNING: did not find a known internal model attr to move", flush=True)
-
-    # 3) Verification probe.
-    _probe_first_param_device(pipe)
-
-
-def _ensure_torch_distributed_initialized() -> None:
-    """LightX2V calls torch.distributed.get_rank() during init.
-
-    In non-distributed, single-process runs (common for this repo), torch.distributed
-    is available but not initialized, and get_rank() raises.
-    """
-
-    try:
-        import torch.distributed as dist  # type: ignore
-    except Exception:
-        return
-
-    if not dist.is_available() or dist.is_initialized():
-        return
-
-    backend = "nccl" if torch.cuda.is_available() else "gloo"
-
-    # Prefer env:// if the user is explicitly running distributed.
-    if os.getenv("RANK") is not None or os.getenv("WORLD_SIZE") is not None:
-        # dist.init_process_group(backend=backend, init_method="env://")
-        return
-
-    # Otherwise initialize a local, single-process group.
-    # Use a random free port to avoid collisions.
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    _addr, port = sock.getsockname()
-    sock.close()
-
-    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-    os.environ.setdefault("MASTER_PORT", str(port))
-    os.environ.setdefault("RANK", "0")
-    os.environ.setdefault("WORLD_SIZE", "1")
-
-    # Some backends use the temp dir for rendezvous artifacts.
-    os.environ.setdefault("TORCH_EXTENSIONS_DIR", os.path.join(tempfile.gettempdir(), "torch_extensions"))
-
-    # dist.init_process_group(
-    #     backend=backend,
-    #     init_method=f"tcp://127.0.0.1:{port}",
-    #     rank=0,
-    #     world_size=1,
-    # )
-
-
-def _maybe_patch_lightx2v_config_json(
-    config_json: Union[str, Path],
-    distill_config: "Wan22DistillConfig",
-) -> Optional[str]:
-    """Ensure LightX2V distill config has keys required by current runner.
-
-    Some LightX2V releases assume certain keys exist in the config JSON. In
-    single-process usage, users often point WAN22_LIGHTX2V_CONFIG_JSON at a
-    generic config which may omit distill-specific fields.
-
-    Returns a path to a patched temp JSON (string) or None if patching failed.
-    """
-
-    try:
-        import importlib.util
-
-        path = Path(config_json)
-        raw = path.read_text(encoding="utf-8")
-        cfg = json.loads(raw)
-        if not isinstance(cfg, dict):
-            return None
-
-        # Force attention backend to SDPA.
-        # This repo prioritizes stability over optional flash-attn/sage-attn backends,
-        # which can import but still crash later with "'NoneType' object is not callable".
-
-        # RoPE backend: some LightX2V configs default to flashinfer.
-        # If flashinfer isn't installed/working, LightX2V ends up with a None
-        # function pointer and crashes with "'NoneType' object is not callable".
-        rope_type = distill_config.rope_type
-        if rope_type.strip().lower() in {"flashinfer", "flash_infer"}:
-            if importlib.util.find_spec("flashinfer") is None:
-                print(
-                    "[WARN] Requested rope_type=flashinfer but flashinfer is not installed; "
-                    "falling back to rope_type=torch",
-                    flush=True,
-                )
-                rope_type = "torch"
-
-        # Force/override rope_type so config_json can't silently select flashinfer.
-        cfg["rope_type"] = rope_type
-
-        # Force attention backend to SDPA (explicitly set associated keys)
-        # LightX2V checks self_attn_1_type, etc.
-        # The registry key is "torch_sdpa", not "sdpa".
-        cfg["attn_mode"] = "torch_sdpa"
-        cfg["self_attn_1_type"] = "torch_sdpa"
-        cfg["cross_attn_1_type"] = "torch_sdpa"
-        cfg["cross_attn_2_type"] = "torch_sdpa"
-
-        # Convert to float to avoid any tensor issues
-        g_scale = float(distill_config.guidance_scale)
-        if "sample_guide_scale" not in cfg:
-            cfg["sample_guide_scale"] = [g_scale, g_scale]
-        if "enable_cfg" not in cfg:
-            if g_scale == 1.0:
-                print("[WAN22] Syncing config: guidance_scale=1.0 -> enable_cfg=False", flush=True)
-                cfg["enable_cfg"] = False
-            else:
-                print(f"[WAN22] Syncing config: guidance_scale={g_scale} -> enable_cfg=True", flush=True)
-                cfg["enable_cfg"] = True
-
-        # Force single-process configuration if running in world_size=1
-        # The error "cfg_p_size * seq_p_size == world_size" suggests these keys exist.
-        
-        # AGGRESSIVE FIX: unexpected parallelism settings cause assertion errors.
-        # If we are patching, we assume we want a working config for THIS environment.
-        # Since we are likely in a single-GPU env (or we wouldn't be hitting these issues manually),
-        # force parallelism off.
-        
-        print("[WAN22] Patching config: Disabling distributed parallelism for single-device usage", flush=True)
-        if isinstance(cfg.get("parallel"), dict):
-            cfg["parallel"] = {"cfg_p_size": 1}
-        
-        # Also strip top-level keys that might trigger old logic
-        for k in ["cfg_p_size", "seq_p_size", "ulysses_size", "ring_degree", "text_parallel_size"]:
-            if k in cfg:
-                cfg[k] = 1
-
-        # Required by Wan22StepDistillScheduler in LightX2V.
-        cfg.setdefault("denoising_step_list", list(distill_config.denoising_step_list))
-
-        # These are commonly consumed; safe defaults keep behavior consistent.
-        cfg.setdefault("boundary_step_index", distill_config.boundary_step_index)
-        cfg.setdefault("infer_steps", distill_config.num_inference_steps)
-        cfg.setdefault("guidance_scale", distill_config.guidance_scale)
-        cfg.setdefault("sample_shift", distill_config.sample_shift)
-        cfg.setdefault("target_height", distill_config.height)
-        cfg.setdefault("target_width", distill_config.width)
-        cfg.setdefault("target_video_length", distill_config.num_frames)
-        cfg.setdefault("height", distill_config.height)
-        cfg.setdefault("width", distill_config.width)
-        cfg.setdefault("num_frames", distill_config.num_frames)
-
-        fd, temp_path = tempfile.mkstemp(prefix="wan22_lightx2v_cfg_", suffix=".json")
-        os.close(fd)
-        Path(temp_path).write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-        return temp_path
-    except Exception:
-        return None
-
-
 @dataclass(frozen=True)
-class Wan22DistillConfig:
-    num_inference_steps: int = 4
-    guidance_scale: float = 5.0
-    width: int = 832
+class LTX2Config:
+    """Configuration for LTX-2 video generation.
+    
+    LTX-2 Fast is optimized for quick iteration and fast generation.
+    Frame count must follow pattern: 8n + 1 (1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81...)
+    """
+    num_inference_steps: int = 30  # LTX-2 Fast uses fewer steps
+    guidance_scale: float = 3.0    # LTX-2 uses lower guidance scale than Wan2.2
+    width: int = 704               # Default 704x480 (16:9) or 704x1280 (9:16)
     height: int = 480
-    num_frames: int = 81
-    sample_shift: float = 5.0
-    boundary_step_index: int = 2
-    denoising_step_list: tuple[int, int, int, int] = (1000, 750, 500, 250)
-    config_json: Optional[Union[str, Path]] = None
-    rope_type: str = "torch"
+    num_frames: int = 49           # ~2 seconds at 24fps (must be 8n+1)
+    fps: int = 24
+    # Generation quality settings
+    use_fp16: bool = True          # Use FP16 for faster inference
+    enable_vae_slicing: bool = True  # Reduce VRAM usage for long videos
+    enable_model_cpu_offload: bool = False  # Set True for low VRAM GPUs
 
 
-class Wan22LightX2VGenerator:
-    """LightX2V wrapper for Wan2.2-Lightning (4-step) Dual-LoRA switching.
-
-    Wan2.2-Lightning LoRA releases ship as a directory containing:
-    - high_noise_model.safetensors
-    - low_noise_model.safetensors
+class LTX2FastGenerator:
+    """LTX-2 Fast video generator for B-roll production.
+    
+    Uses HuggingFace Diffusers LTX2Pipeline for fast, high-quality video generation
+    with synchronized audio capability.
+    
+    Model: Lightricks/LTX-2 (or LTX-2-fast for even faster generation)
     """
 
-    @staticmethod
-    def _resolve_lightning_lora_dir(
-        models_dir: Path,
-        lightning_lora_dir: Optional[Union[str, Path]],
-        lightning_folder: str,
-    ) -> Path:
-        if lightning_lora_dir is not None:
-            candidate = Path(lightning_lora_dir)
-            if candidate.exists():
-                return candidate
-            raise FileNotFoundError(f"lightning_lora_dir does not exist: {candidate}")
-
-        env_dir = os.getenv("WAN22_LIGHTNING_LORA_DIR")
-        if env_dir:
-            candidate = Path(env_dir)
-            if candidate.exists():
-                return candidate
-            raise FileNotFoundError(f"WAN22_LIGHTNING_LORA_DIR does not exist: {candidate}")
-
-        repo_root = Path(__file__).resolve().parent
-        candidates = [
-            models_dir / "loras" / lightning_folder,
-            repo_root / "Wan2.2-Lightning" / lightning_folder,
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-
-        raise FileNotFoundError(
-            "Wan2.2-Lightning LoRA directory not found. "
-            "Set WAN22_LIGHTNING_LORA_DIR or pass lightning_lora_dir, e.g. "
-            "./Wan2.2-Lightning/Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0"
-        )
-
-    @staticmethod
-    def _maybe_downgrade_attn_mode(attn_mode: str) -> str:
-        # Always use SDPA for stability.
-        _ = attn_mode
-        return "sdpa"
-
-    @staticmethod
-    def _resolve_lightx2v_config_json(config: Wan22DistillConfig) -> Optional[Union[str, Path]]:
-        if config.config_json is not None:
-            return config.config_json
-
-        env_cfg = os.getenv("WAN22_LIGHTX2V_CONFIG_JSON")
-        if env_cfg:
-            return env_cfg
-
-        repo_cfg = (
-            Path(__file__).resolve().parent
-            / "LightX2V"
-            / "configs"
-            / "dist_infer"
-            / "wan22_moe_t2v_cfg.json"
-        )
-        if repo_cfg.exists():
-            return repo_cfg
-
-        try:
-            from importlib import resources
-
-            cfg_path = resources.files("lightx2v").joinpath("configs", "dist_infer", "wan22_moe_t2v_cfg.json")
-            if cfg_path.is_file():
-                return str(cfg_path)
-        except Exception:
-            pass
-
-        return None
-
-    
+    # Frame count must be 8n + 1 for LTX models
+    VALID_FRAME_COUNTS = [1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121]
 
     def __init__(
         self,
-        models_dir: Union[str, Path] = "./models",
-        base_model_dirname: str = "Wan2.2-T2V-A14B",
-        lightning_lora_dir: Optional[Union[str, Path]] = None,
-        offload_model: bool = False,  # Default: keep on GPU
-        config: Wan22DistillConfig = Wan22DistillConfig(),
-        attn_mode: str = "sdpa",
+        model_id: str = "Lightricks/LTX-2",
+        config: Optional[LTX2Config] = None,
+        device: str = "cuda",
+        cache_dir: Optional[Union[str, Path]] = None,
     ):
-        print("[WAN22] Entering Wan22LightX2VGenerator.__init__", flush=True)
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for Wan2.2 generation")
-
-        if config.num_inference_steps != 4:
-            raise ValueError("Wan2.2 4-step distilled LoRAs require num_inference_steps=4")
-
-        os.environ.setdefault("DTYPE", "BF16")
+        """Initialize LTX-2 Fast generator.
+        
+        Args:
+            model_id: HuggingFace model ID (default: Lightricks/LTX-2)
+            config: LTX2Config instance with generation parameters
+            device: Device to run on (cuda or cpu)
+            cache_dir: Optional directory to cache downloaded models
+        """
+        print("[LTX-2] Entering LTX2FastGenerator.__init__", flush=True)
+        
+        if not torch.cuda.is_available() and device == "cuda":
+            raise RuntimeError("CUDA is required for LTX-2 generation. CPU inference is not supported.")
+        
+        self.config = config or LTX2Config()
+        self.device = device
+        self.model_id = model_id
+        
+        # Set environment variables for better memory management
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-
-        # Explicit override: on high-VRAM GPUs we want everything resident on GPU.
-        # If set, this forces offload_model=False even if a caller passes True.
-        if os.getenv("WAN22_FORCE_GPU", "").strip().lower() in {"1", "true", "yes", "y"}:
-            offload_model = False
-
-        self.models_dir = Path(models_dir)
-        # Support both layouts:
-        # - this repo's: ./models/Wan2.2-T2V-A14B
-        # - README's:    ./Wan2.2-T2V-A14B
-        base_model_candidate = Path(base_model_dirname)
-        if base_model_candidate.exists():
-            self.base_model_path = base_model_candidate
+        
+        # Cache directory for models
+        if cache_dir is not None:
+            self.cache_dir = Path(cache_dir)
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
         else:
-            repo_root = Path(__file__).resolve().parent
-            preferred = self.models_dir / base_model_dirname
-            fallback = repo_root / base_model_dirname
-            self.base_model_path = preferred if preferred.exists() else fallback
+            self.cache_dir = None
+        
+        # Initialize pipeline
+        self._init_pipeline()
+        
+        print("[LTX-2] Finished LTX2FastGenerator.__init__", flush=True)
 
-        # Wan2.2-Lightning layout: a directory with high_noise_model/low_noise_model.
-        # Default search order:
-        # 1) explicit argument
-        # 2) env var WAN22_LIGHTNING_LORA_DIR
-        # 3) ./models/loras/<lightning folder>
-        # 4) ./Wan2.2-Lightning/<lightning folder>
-        lightning_folder = "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0"
-        self.lightning_lora_dir = self._resolve_lightning_lora_dir(
-            models_dir=self.models_dir,
-            lightning_lora_dir=lightning_lora_dir,
-            lightning_folder=lightning_folder,
-        )
-        self.high_noise_lora_path = self.lightning_lora_dir / "high_noise_model.safetensors"
-        self.low_noise_lora_path = self.lightning_lora_dir / "low_noise_model.safetensors"
-
-        if not self.base_model_path.exists():
-            raise FileNotFoundError(f"Base model not found at {self.base_model_path}")
-        if not self.high_noise_lora_path.exists():
-            raise FileNotFoundError(
-                f"High-noise Lightning LoRA not found at {self.high_noise_lora_path}. "
-                "Expected file name: high_noise_model.safetensors"
-            )
-        if not self.low_noise_lora_path.exists():
-            raise FileNotFoundError(
-                f"Low-noise Lightning LoRA not found at {self.low_noise_lora_path}. "
-                "Expected file name: low_noise_model.safetensors"
-            )
-
+    def _init_pipeline(self):
+        """Initialize the LTX-2 Diffusers pipeline."""
+        # Check diffusers version
         try:
-            from lightx2v import LightX2VPipeline  # type: ignore[import-not-found]
-        except Exception as e:
+            import diffusers
+            version = diffusers.__version__
+            major, minor = map(int, version.split('.')[:2])
+            if major < 0 or (major == 0 and minor < 32):
+                print(f"[WARN] diffusers {version} may not support LTX-2. Upgrading to >=0.32.0...", flush=True)
+                import subprocess
+                subprocess.check_call(["pip", "install", "-q", "diffusers>=0.32.0"])
+                print("[INFO] diffusers upgraded. Please restart.", flush=True)
+                raise RuntimeError("diffusers was upgraded. Please restart the script.")
+        except Exception:
+            pass
+        
+        # Ensure einops is installed (required by LTX-2)
+        try:
+            import einops
+        except ImportError:
+            print("[WARN] einops not found. Installing...", flush=True)
+            import subprocess
+            subprocess.check_call(["pip", "install", "-q", "einops"])
+            import einops  # Try again
+        
+        try:
+            from diffusers import LTX2Pipeline
+        except ImportError as e:
             raise RuntimeError(
-                "Failed to import LightX2V "
-                f"({type(e).__name__}: {e}). "
-                "This usually means LightX2V wasn't installed successfully in the active environment, "
-                "or a build/runtime dependency is missing. "
-                "Re-run setup_wan.sh (it installs LightX2V into .venv) or install manually with: "
-                "pip install -v git+https://github.com/ModelTC/LightX2V.git"
+                "Failed to import diffusers LTX2Pipeline. "
+                "Please install: pip install diffusers>=0.32.0 transformers accelerate"
             ) from e
-
-        self.pipe = LightX2VPipeline(
-            task="t2v",
-            model_path=str(self.base_model_path),
-            model_cls="wan2.2_moe_distill",
-        )
-        _log_cuda_memory("after LightX2VPipeline()")
-
-        if offload_model:
-            self.pipe.enable_offload(
-                cpu_offload=True,
-                offload_granularity="model",
-                text_encoder_offload=False,
-                image_encoder_offload=False,
-                vae_offload=False,
+        
+        # Try to import export_to_video with fallbacks
+        try:
+            from diffusers.utils import export_to_video
+        except ImportError:
+            # Fallback for different diffusers versions
+            try:
+                from diffusers.video_processor import export_to_video
+            except ImportError:
+                # Final fallback - use imageio
+                export_to_video = None
+        
+        print(f"[LTX-2] Loading model: {self.model_id}", flush=True)
+        _log_cuda_memory("before pipeline load")
+        
+        # Determine dtype based on config
+        dtype = torch.float16 if self.config.use_fp16 else torch.bfloat16
+        
+        # Load pipeline
+        load_kwargs = {
+            "torch_dtype": dtype,
+            "variant": "fp16" if self.config.use_fp16 else "bf16",
+        }
+        
+        if self.cache_dir is not None:
+            load_kwargs["cache_dir"] = str(self.cache_dir)
+        
+        try:
+            self.pipe = LTX2Pipeline.from_pretrained(
+                self.model_id,
+                **load_kwargs
             )
-
-        # NOTE: LightX2V appears to lazily materialize/load the actual model
-        # (torch.nn.Module + weights) during create_generator() in some versions.
-        # To ensure LoRA patching happens on GPU, we create the generator first,
-        # then move the now-materialized model to CUDA, then apply LoRAs.
-        high_path = str(self.high_noise_lora_path)
-        low_path = str(self.low_noise_lora_path)
-
-        attn_mode = self._maybe_downgrade_attn_mode(attn_mode)
-        if attn_mode != "sdpa":
-            # Defensive: _maybe_downgrade_attn_mode currently forces sdpa, but keep this
-            # in case future edits change behavior.
-            attn_mode = "sdpa"
-
-        # Prefer LightX2V's own reference config when available.
-        # Grainy/under-denoised outputs are often caused by mismatched distill settings.
-        effective_config_json = self._resolve_lightx2v_config_json(config)
-
-        # LightX2V currently calls torch.distributed.get_rank() during generator creation.
-        _ensure_torch_distributed_initialized()
-
-        if effective_config_json is not None:
-            patched = _maybe_patch_lightx2v_config_json(effective_config_json, config)
-            if patched is not None:
-                print(f"[INFO] LightX2V generator config_json: {effective_config_json} (patched: {patched})")
-                _pipe_create_generator(self.pipe, config_json=str(patched))
-            else:
-                print(
-                    f"[WARN] LightX2V generator config_json could not be patched ({effective_config_json}); "
-                    "falling back to inline distill params"
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "401" in str(e) or "authentication" in error_msg or "token" in error_msg:
+                raise RuntimeError(
+                    f"HuggingFace authentication failed for {self.model_id}. "
+                    "Please login: huggingface-cli login "
+                    "or set HF_TOKEN environment variable."
+                ) from e
+            elif "404" in str(e) or "not found" in error_msg:
+                raise RuntimeError(
+                    f"Model {self.model_id} not found. "
+                    "The model may have been moved or renamed. "
+                    "Check https://huggingface.co/Lightricks for available models."
+                ) from e
+            
+            # Fallback: try without variant
+            print(f"[LTX-2] Failed to load with variant, retrying without...")
+            load_kwargs.pop("variant", None)
+            try:
+                self.pipe = LTX2Pipeline.from_pretrained(
+                    self.model_id,
+                    **load_kwargs
                 )
-                _pipe_create_generator(
-                    self.pipe,
-                    attn_mode=attn_mode,
-                    rope_type=config.rope_type,
-                    infer_steps=config.num_inference_steps,
-                    height=config.height,
-                    width=config.width,
-                    num_frames=config.num_frames,
-                    guidance_scale=[config.guidance_scale, config.guidance_scale],
-                    sample_shift=config.sample_shift,
-                    boundary_step_index=config.boundary_step_index,
-                    denoising_step_list=list(config.denoising_step_list),
-                )
-        else:
-            print("[INFO] LightX2V generator config_json: (none) using inline distill params")
-            _pipe_create_generator(
-                self.pipe,
-                attn_mode=attn_mode,
-                rope_type=config.rope_type,
-                infer_steps=config.num_inference_steps,
-                height=config.height,
-                width=config.width,
-                num_frames=config.num_frames,
-                guidance_scale=[config.guidance_scale, config.guidance_scale],
-                sample_shift=config.sample_shift,
-                boundary_step_index=config.boundary_step_index,
-                denoising_step_list=list(config.denoising_step_list),
-            )
+            except Exception as e2:
+                raise RuntimeError(
+                    f"Failed to load LTX-2 model after retry: {e2}. "
+                    "Original error: {e}"
+                ) from e2
+        
+        _log_cuda_memory("after pipeline load")
+        
+        # Move to device
+        self.pipe = self.pipe.to(self.device)
+        
+        # Enable memory optimizations if configured
+        if self.config.enable_vae_slicing:
+            try:
+                self.pipe.enable_vae_slicing()
+                print("[LTX-2] VAE slicing enabled", flush=True)
+            except Exception as e:
+                print(f"[WARN] VAE slicing failed: {e}", flush=True)
+        
+        if self.config.enable_model_cpu_offload:
+            try:
+                self.pipe.enable_model_cpu_offload()
+                print("[LTX-2] Model CPU offload enabled", flush=True)
+            except Exception as e:
+                print(f"[WARN] CPU offload failed: {e}", flush=True)
+        
+        # Auto-detect low VRAM and enable CPU offload if needed
+        if torch.cuda.is_available():
+            free_gb = torch.cuda.mem_get_info()[0] / 1024**3
+            if free_gb < 16 and not self.config.enable_model_cpu_offload:
+                print(f"[LTX-2] Low VRAM detected ({free_gb:.1f}GB). Enabling CPU offload...", flush=True)
+                try:
+                    self.pipe.enable_model_cpu_offload()
+                    print("[LTX-2] CPU offload auto-enabled", flush=True)
+                except Exception as e:
+                    print(f"[WARN] Auto CPU offload failed: {e}", flush=True)
+        
+        _log_cuda_memory("after optimizations")
+        
+        # Store export function or None if not available
+        self._export_to_video = export_to_video
 
-        # Now that create_generator() has (likely) materialized the underlying model,
-        # force GPU residency before applying LoRAs.
-        if not offload_model:
-            _brute_force_move_lightx2v_to_cuda(self.pipe)
+    def _validate_frame_count(self, num_frames: int) -> int:
+        """Validate and adjust frame count to 8n+1 pattern."""
+        if num_frames in self.VALID_FRAME_COUNTS:
+            return num_frames
+        
+        # Find closest valid frame count
+        closest = min(self.VALID_FRAME_COUNTS, key=lambda x: abs(x - num_frames))
+        print(f"[LTX-2] Adjusted frame count {num_frames} -> {closest} (must be 8n+1)", flush=True)
+        return closest
 
-        # Apply Dual-LoRA after the base weights exist and (optionally) are on CUDA.
-        # LightX2V's LoRA API and expected LoRA names have changed across versions.
-        # For Wan2.2 distill runners, LightX2V requires explicit LoRA names.
-        self.pipe.enable_lora(
-            [
-                {"name": "high_noise_model", "path": high_path, "strength": 1.0},
-                {"name": "low_noise_model", "path": low_path, "strength": 1.0},
-            ]
-        )
+    def _calculate_frames_for_duration(self, duration_seconds: float) -> int:
+        """Calculate frame count needed for desired duration."""
+        target_frames = int(duration_seconds * self.config.fps)
+        return self._validate_frame_count(target_frames)
 
-        _log_cuda_memory("after create_generator()")
-        _probe_first_param_device(self.pipe)
-
-        print("[WAN22] Finished Wan22LightX2VGenerator.__init__", flush=True)
-
-        self.config = config
-
-    def generate_clip(self, prompt: str, output_path: Union[str, Path], seed: Optional[int] = None) -> str:
+    def generate_clip(
+        self, 
+        prompt: str, 
+        output_path: Union[str, Path], 
+        seed: Optional[int] = None,
+        duration: Optional[float] = None,
+        negative_prompt: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        num_frames: Optional[int] = None,
+    ) -> str:
+        """Generate a video clip from text prompt.
+        
+        Args:
+            prompt: Text description of desired video
+            output_path: Where to save the generated video
+            seed: Random seed for reproducibility
+            duration: Target duration in seconds (overrides num_frames)
+            negative_prompt: Things to avoid in generation
+            width: Video width (default from config)
+            height: Video height (default from config)
+            num_frames: Number of frames (default from config or calculated from duration)
+            
+        Returns:
+            Path to generated video file
+        """
         if not prompt or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
-
+        
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        enhanced_prompt = f"{prompt.strip()}"
+        
+        # Use provided values or defaults from config
+        width = width or self.config.width
+        height = height or self.config.height
+        
+        if duration is not None:
+            num_frames = self._calculate_frames_for_duration(duration)
+        else:
+            num_frames = num_frames or self.config.num_frames
+            num_frames = self._validate_frame_count(num_frames)
+        
+        # Ensure dimensions are divisible by 32 (LTX requirement)
+        width = (width // 32) * 32
+        height = (height // 32) * 32
+        
         if seed is None:
             seed = random.randint(0, 2**31 - 1)
-
-        start = time.time()
-        try:
-            self.pipe.generate(
-                seed=seed,
-                prompt=enhanced_prompt,
-                negative_prompt="",
-                save_result_path=str(output_path),
+        
+        # Set seed for reproducibility
+        generator = torch.Generator(device=self.device).manual_seed(seed)
+        
+        # Default negative prompt for quality
+        if negative_prompt is None:
+            negative_prompt = (
+                "worst quality, inconsistent motion, blurry, jittery, distorted, "
+                "poorly drawn, bad anatomy, watermark, signature, text"
             )
+        
+        print(f"[LTX-2] Generating: {prompt[:60]}...", flush=True)
+        print(f"[LTX-2] Resolution: {width}x{height}, Frames: {num_frames}, Seed: {seed}", flush=True)
+        
+        _log_cuda_memory("before generation")
+        start = time.time()
+        
+        try:
+            # Generate video
+            result = self.pipe(
+                prompt=prompt.strip(),
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                num_frames=num_frames,
+                num_inference_steps=self.config.num_inference_steps,
+                guidance_scale=self.config.guidance_scale,
+                generator=generator,
+            )
+            
+            video_frames = result.frames[0]
+            
+            # Export to video file
+            if self._export_to_video is not None:
+                self._export_to_video(video_frames, str(output_path), fps=self.config.fps)
+            else:
+                # Fallback using imageio
+                import imageio
+                imageio.mimsave(str(output_path), video_frames, fps=self.config.fps, quality=8)
+            
+            elapsed = time.time() - start
+            _log_cuda_memory("after generation")
+            
+            print(f"[LTX-2] Generated in {elapsed:.1f}s: {output_path}", flush=True)
+            
+        except RuntimeError as e:
+            # Check for OOM
+            if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
+                print("[LTX-2] CUDA OOM detected. Trying with CPU offload...", flush=True)
+                try:
+                    self.pipe.enable_model_cpu_offload()
+                    # Retry once
+                    result = self.pipe(
+                        prompt=prompt.strip(),
+                        negative_prompt=negative_prompt,
+                        width=width,
+                        height=height,
+                        num_frames=num_frames,
+                        num_inference_steps=self.config.num_inference_steps,
+                        guidance_scale=self.config.guidance_scale,
+                        generator=generator,
+                    )
+                    video_frames = result.frames[0]
+                    if self._export_to_video is not None:
+                        self._export_to_video(video_frames, str(output_path), fps=self.config.fps)
+                    else:
+                        import imageio
+                        imageio.mimsave(str(output_path), video_frames, fps=self.config.fps, quality=8)
+                    
+                    elapsed = time.time() - start
+                    _log_cuda_memory("after generation (with CPU offload)")
+                    print(f"[LTX-2] Generated with CPU offload in {elapsed:.1f}s: {output_path}", flush=True)
+                    
+                except Exception as retry_e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    raise RuntimeError(
+                        f"LTX-2 generation failed even with CPU offload: {retry_e}\n"
+                        f"Try reducing resolution (LTX2_RESOLUTION=480p) or using --fast-mode.\n{tb}"
+                    ) from retry_e
+            else:
+                import traceback
+                tb = traceback.format_exc()
+                raise RuntimeError(
+                    f"LTX-2 generation failed: {type(e).__name__}: {e}\n{tb}"
+                ) from e
         except Exception as e:
             import traceback
-            from importlib import metadata
-
-            lightx2v_version = None
-            try:
-                lightx2v_version = metadata.version("lightx2v")
-            except Exception:
-                lightx2v_version = None
-
-            # The most common cause of "'NoneType' object is not callable" here is a
-            # LightX2V internal callback/hook (often LoRA switching in Wan distill runners)
-            # not being initialized due to a version/API mismatch.
-            diag = {
-                "lightx2v_version": lightx2v_version,
-                "pipe_type": type(self.pipe).__name__,
-                "has_create_generator": callable(getattr(self.pipe, "create_generator", None)),
-                "has_enable_lora": callable(getattr(self.pipe, "enable_lora", None)),
-                "has_generate": callable(getattr(self.pipe, "generate", None)),
-                "models_dir": str(self.models_dir),
-                "base_model_path": str(self.base_model_path),
-                "high_noise_lora_path": str(self.high_noise_lora_path),
-                "low_noise_lora_path": str(self.low_noise_lora_path),
-            }
-
             tb = traceback.format_exc()
             raise RuntimeError(
-                "LightX2V generation failed inside LightX2VPipeline.generate(). "
-                "If the error is 'NoneType object is not callable', it is usually caused by "
-                "a LightX2V version mismatch where the Wan distill runner expects a hook/callback "
-                "(often LoRA switching HIGH/LOW noise models) that was not initialized. "
-                f"Original error: {type(e).__name__}: {e}\n"
-                f"Diagnostics: {diag}\n"
-                f"Traceback:\n{tb}"
+                f"LTX-2 generation failed: {type(e).__name__}: {e}\n{tb}"
             ) from e
-        _ = time.time() - start
-
+        
+        # Verify output
         if not output_path.exists():
             raise RuntimeError(f"Generation completed but output not found: {output_path}")
-        if output_path.stat().st_size < 10_000:
-            raise RuntimeError(f"Generated file too small ({output_path.stat().st_size} bytes): {output_path}")
-
+        
+        file_size = output_path.stat().st_size
+        if file_size < 10_000:  # At least 10KB
+            raise RuntimeError(f"Generated file too small ({file_size} bytes): {output_path}")
+        
         return str(output_path)
+
+    def generate_broll_for_region(
+        self,
+        prompt: str,
+        duration: float,
+        output_path: Union[str, Path],
+        seed: Optional[int] = None,
+    ) -> str:
+        """Generate B-roll video optimized for a specific duration.
+        
+        This is a convenience method for the B-roll pipeline.
+        
+        Args:
+            prompt: Visual description for the B-roll
+            duration: Target duration in seconds (will be adjusted to valid frame count)
+            output_path: Where to save the video
+            seed: Random seed
+            
+        Returns:
+            Path to generated video file
+        """
+        return self.generate_clip(
+            prompt=prompt,
+            output_path=output_path,
+            seed=seed,
+            duration=duration,
+        )
+
+
+# Backwards compatibility alias
+class Wan22LightX2VGenerator(LTX2FastGenerator):
+    """Backwards compatibility wrapper for old code using Wan22LightX2VGenerator.
+    
+    This redirects to LTX2FastGenerator. Please update your code to use
+    LTX2FastGenerator directly.
+    """
+    
+    def __init__(self, *args, **kwargs):
+        print("[DEPRECATED] Wan22LightX2VGenerator is deprecated. Using LTX2FastGenerator instead.", flush=True)
+        # Ignore old Wan2.2 specific arguments
+        wan22_args = ["models_dir", "base_model_dirname", "lightning_lora_dir", "offload_model"]
+        for arg in wan22_args:
+            kwargs.pop(arg, None)
+        super().__init__(*args, **kwargs)
+
+
+def create_ltx2_generator(
+    resolution: str = "480p",
+    aspect_ratio: str = "16:9",
+    fast_mode: bool = True,
+) -> LTX2FastGenerator:
+    """Factory function to create LTX-2 generator with preset configurations.
+    
+    Args:
+        resolution: One of "480p", "720p", "1080p", "4K"
+        aspect_ratio: "16:9" or "9:16"
+        fast_mode: Use faster generation settings (fewer steps)
+        
+    Returns:
+        Configured LTX2FastGenerator instance
+    """
+    # Resolution presets (width, height) divisible by 32
+    resolutions = {
+        "480p": {"16:9": (704, 480), "9:16": (480, 704)},
+        "720p": {"16:9": (1280, 704), "9:16": (704, 1280)},
+        "1080p": {"16:9": (1920, 1088), "9:16": (1088, 1920)},
+        "4K": {"16:9": (3840, 2176), "9:16": (2176, 3840)},
+    }
+    
+    if resolution not in resolutions:
+        raise ValueError(f"Unknown resolution: {resolution}. Choose from {list(resolutions.keys())}")
+    
+    width, height = resolutions[resolution][aspect_ratio]
+    
+    # Adjust steps based on fast_mode
+    num_steps = 20 if fast_mode else 30
+    
+    config = LTX2Config(
+        width=width,
+        height=height,
+        num_inference_steps=num_steps,
+    )
+    
+    print(f"[LTX-2] Creating generator: {resolution} {aspect_ratio}, fast_mode={fast_mode}")
+    
+    return LTX2FastGenerator(config=config)
+
+
+if __name__ == "__main__":
+    # Test generation
+    print("🎬 LTX-2 Fast Video Generator Test")
+    print("=" * 50)
+    
+    try:
+        # Create generator with default settings
+        generator = create_ltx2_generator(resolution="480p", aspect_ratio="16:9", fast_mode=True)
+        
+        # Test prompt
+        test_prompt = (
+            "Smooth aerial dolly shot gliding over a city at dusk, "
+            "camera moving forward steadily, windows glowing, soft haze drifting"
+        )
+        
+        output_file = "test_ltx2_output.mp4"
+        
+        print(f"\n📝 Prompt: {test_prompt}")
+        print(f"📁 Output: {output_file}\n")
+        
+        result = generator.generate_clip(
+            prompt=test_prompt,
+            output_path=output_file,
+            duration=2.0,  # 2 seconds
+        )
+        
+        print(f"\n✅ Success! Video saved to: {result}")
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()

@@ -1,45 +1,160 @@
+# ============================================================
+# PYTHON
+# ============================================================
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+linuxvenv/
+AGENTS.md
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ============================================================
+# PROJECT - Generated files and directories
+# ============================================================
+# Output directories
 clips/
 downloads/
-srts/
 transcripts/
-venv/
-outputs
-gpt_response.txt
-.env
-cookies.txt
-final_clips.jsonl
-captions
-gpt_response0.txt
-gpt_response1.txt
-gpt_response2.txt
-gpt_response3.txt
-gpt_response4.txt
-gpt_response5.txt
-gpt_response6.txt
-gpt_response7.txt
-gpt_response8.txt
-gpt_response9.txt
-gpt_response10.txt
-gpt_response11.txt
-gpt_response12.txt
-gpt_response13.txt
-gpt_response14.txt
-gpt_response15.txt
-gpt_response16.txt
+outputs/
+output/
+broll/
+captions/
+final_clips/
+clips_archive/
+srts/
+post_processing/
+music/
+models/
 
+# Generated JSON/text files
 final_clips.json
-fast_broll.py
-keys.txt
-lol.txt
-post_processing
-add_watermark.py
-music
+final_clips.jsonl
 final_clips_aligned.json
-final_clips
-clips_archive
-add_music.py
-linuxvenv
-LightX2V
-models
-.venv
-run_on_vast.py
+gpt_response*.txt
+*.log
+
+# ============================================================
+# SECRETS AND KEYS
+# ============================================================
+.env
+.env.local
+.env.*.local
+cookies.txt
+keys.txt
+*.key
+*.pem
+secrets/
+
+# ============================================================
+# IDE AND EDITOR
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================
+# TEMPORARY AND CACHE FILES
+# ============================================================
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+*.cover
+.hypothesis/
+.tox/
+.nox/
+
+# ============================================================
+# MODELS AND LARGE FILES
+# ============================================================
+*.safetensors
+*.ckpt
+*.pth
+*.bin
+*.onnx
+*.pb
+LightX2V/
+Wan2.2/
+Wan2.2-TI2V-5B/
+*.h5
+*.pkl
+*.pickle
+
+# ============================================================
+# VIDEO AND MEDIA (if accidentally created in root)
+# ============================================================
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.gif
+*.png
+*.jpg
+*.jpeg
+*.wav
+*.mp3
+*.aac
+
+# ============================================================
+# TESTING
+# ============================================================
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+nosetests.xml
+test_output/
+test_*.mp4
+
+# ============================================================
+# MISC
+# ============================================================
+lol.txt
+vastai_commands.txt
+concat_list.txt
+all_gpt_clips.json
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Shell history
+.bash_history
+.zsh_history
+.history

@@ -551,7 +551,7 @@ def extract_clips(transcript, var ,max_clips=2):
 
 
     response = client.chat.completions.create(
-        model="gpt-4.1-2025-04-14",
+        model="gpt-5-mini-2025-08-07",
         temperature=0.5,
         messages=[ 
             {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
@@ -2294,7 +2294,7 @@ def main(video_path, output_dir=None, generate_broll=True):
 
 
     response = client.chat.completions.create(
-        model="gpt-4.1-2025-04-14",
+        model="gpt-5-mini-2025-08-07",
         messages=[
             {"role": "system", "content": "You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
             {"role": "user", "content": rerank_prompt}
