@@ -1730,7 +1730,28 @@ import os, glob, yt_dlp
 
 def download_youtube_video(url, output_path="downloads"):
     os.makedirs(output_path, exist_ok=True)
-    output_template = os.path.join(output_path, "%(title).40s.%(ext)s")
+    
+    # Extract video ID for caching
+    import re
+    video_id_match = re.search(r'(?:v=|/)([0-9A-Za-z_-]{11})', url)
+    video_id = video_id_match.group(1) if video_id_match else None
+    
+    # Check if already downloaded (by video ID in filename)
+    if video_id:
+        existing_files = glob.glob(os.path.join(output_path, f"*{video_id}*.mp4"))
+        if existing_files:
+            print(f"📁 Using cached video: {os.path.basename(existing_files[0])}")
+            print(f"   (Delete file to re-download)")
+            return existing_files[0]
+        # Also check for any mp4 with video_id in the folder
+        for f in os.listdir(output_path):
+            if video_id in f and f.endswith('.mp4'):
+                full_path = os.path.join(output_path, f)
+                print(f"📁 Using cached video: {f}")
+                print(f"   (Delete file to re-download)")
+                return full_path
+    
+    output_template = os.path.join(output_path, "%(title).40s_%(id)s.%(ext)s")
 
     # Try multiple strategies to bypass bot detection
     strategies = [
@@ -1776,25 +1797,43 @@ def download_youtube_video(url, output_path="downloads"):
 
     print(f"📥 Downloading from YouTube: {url}")
     
-    for i, ydl_opts in enumerate(strategies, 1):
-        # Remove None values from options
-        ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
+    for attempt in range(3):  # 3 attempts with exponential backoff
+        if attempt > 0:
+            wait_time = 30 * attempt  # 30s, 60s
+            print(f"  ⏳ Rate limited? Waiting {wait_time}s before retry...")
+            import time
+            time.sleep(wait_time)
         
-        print(f"  Trying strategy {i}/3...")
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                ydl.download([url])
-                print("✅ Download complete.")
-                break
-            except Exception as e:
-                print(f"  ❌ Strategy {i} failed: {str(e)[:100]}...")
-                if i == len(strategies):
-                    print(f"❌ All download strategies failed. Last error: {e}")
-                    print("\n💡 To fix this issue:")
-                    print("1. Install a browser extension to export YouTube cookies")
-                    print("2. Save cookies as 'cookies.txt' in this directory")
-                    print("3. Or use yt-dlp with --cookies-from-browser chrome")
-                    return None
+        for i, ydl_opts in enumerate(strategies, 1):
+            # Remove None values from options
+            ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
+            
+            print(f"  Trying strategy {i}/3 (attempt {attempt+1}/3)...")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    ydl.download([url])
+                    print("✅ Download complete.")
+                    break
+                except Exception as e:
+                    error_str = str(e).lower()
+                    print(f"  ❌ Strategy {i} failed: {str(e)[:100]}...")
+                    
+                    # Check if it's a rate limit error
+                    if "429" in error_str or "too many requests" in error_str or "sign in" in error_str:
+                        if attempt < 2:  # Will retry
+                            print(f"  ⚠️  Rate limited by YouTube. Will retry after wait...")
+                            break  # Break to outer retry loop
+                    
+                    if i == len(strategies) and attempt == 2:
+                        print(f"❌ All download strategies failed after 3 attempts.")
+                        print("\n💡 To fix this issue:")
+                        print("1. Wait 10-15 minutes and try again")
+                        print("2. Use a different IP (VPN/proxy)")
+                        print("3. Download manually and use --video local_file.mp4")
+                        return None
+        else:
+            continue  # Only continue if inner loop didn't break
+        break  # Break if download succeeded
 
     # Find the downloaded file
     downloaded_files = sorted(
