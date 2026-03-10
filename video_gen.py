@@ -105,12 +105,13 @@ class LTX2FastGenerator:
             raise RuntimeError("CUDA is required for LTX-2 generation. CPU inference is not supported.")
         
         # Check GPU memory and configure accordingly
+        self.total_gb = 0
         if torch.cuda.is_available():
-            total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-            print(f"[LTX-2] GPU VRAM: {total_gb:.1f}GB")
+            self.total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            print(f"[LTX-2] GPU VRAM: {self.total_gb:.1f}GB")
             
-            if total_gb >= 80:  # Only skip CPU offload for 80GB+ GPUs (H100)
-                print(f"[LTX-2] ✅ {total_gb:.1f}GB VRAM detected! Running fully on GPU.")
+            if self.total_gb >= 80:  # Only skip CPU offload for 80GB+ GPUs (H100)
+                print(f"[LTX-2] ✅ {self.total_gb:.1f}GB VRAM detected! Running fully on GPU.")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=False)
                 else:
@@ -126,8 +127,8 @@ class LTX2FastGenerator:
                         enable_vae_slicing=config.enable_vae_slicing,
                         enable_model_cpu_offload=False,  # Keep on GPU!
                     )
-            elif total_gb < 80 and not (config and config.enable_model_cpu_offload):
-                print(f"[LTX-2] INFO: Using model CPU offload for {total_gb:.1f}GB GPU.")
+            elif self.total_gb < 80 and not (config and config.enable_model_cpu_offload):
+                print(f"[LTX-2] INFO: Using model CPU offload for {self.total_gb:.1f}GB GPU.")
                 print(f"[LTX-2] Text encoder (~24GB) on CPU, transformer on GPU.")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=True)
@@ -235,6 +236,7 @@ class LTX2FastGenerator:
         # Memory optimization strategy:
         # LTX-2 needs ~35GB+ VRAM for full GPU loading
         # Text encoder alone is ~24GB, so we need CPU offload for 40GB GPUs
+        total_gb = getattr(self, 'total_gb', 0)
         print(f"[LTX-2] Applying memory optimizations for {total_gb:.1f}GB GPU...", flush=True)
         
         # Always use some form of CPU offload to fit on 40GB
