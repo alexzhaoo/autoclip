@@ -1,13 +1,16 @@
-"""Video generation using LTX-2 Fast for B-roll production.
+"""Video generation using LTX-2 for B-roll production.
 
 This module provides a unified interface for generating B-roll video clips
-using Lightricks' LTX-2 Fast model via HuggingFace Diffusers.
+using Lightricks' LTX-2 model via HuggingFace Diffusers.
 
 VRAM Requirements:
 - LTX-2 is a 19B parameter model
-- FP16: ~35GB VRAM (too big for 24-30GB GPUs)
-- With CPU offload: Works on 16-24GB GPUs
-- With quantization: Works on 12-16GB GPUs
+- bfloat16 transformer weights alone: ~38GB
+- 40GB GPU (A100/A6000): requires enable_sequential_cpu_offload() — streams
+  individual layers layer-by-layer so peak VRAM stays manageable.
+  enable_model_cpu_offload() is NOT sufficient and will OOM on 40GB GPUs.
+- 80GB+ GPU (H100/A100-80GB): can run fully on GPU without offload
+- With fp8 quantization: Works on 24GB GPUs (use ltx-2-19b-dev-fp8 checkpoint)
 """
 
 import json
@@ -52,13 +55,13 @@ def _log_cuda_memory(tag: str) -> None:
 class LTX2Config:
     """Configuration for LTX-2 video generation.
     
-    LTX-2 is a 19B parameter model requiring significant VRAM.
-    Frame count must follow pattern: 8n + 1 (1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81...)
+    LTX-2 is a 19B parameter model. Frame count must follow pattern: 8n + 1.
     
     VRAM Requirements:
-    - Model alone (FP16): ~35GB
-    - With CPU offload: Works on 16-24GB GPUs ✅
-    - With quantization: Works on 12-16GB GPUs
+    - Transformer weights (bfloat16): ~38GB
+    - 40GB GPU: MUST use sequential CPU offload (layer streaming) — NOT model CPU offload
+    - 80GB GPU: can run fully on GPU
+    - fp8 quantized checkpoint: works on 24GB GPUs
     """
     num_inference_steps: int = 20  # LTX-2 Fast uses fewer steps (20 for speed, 30 for quality)
     guidance_scale: float = 3.0    # LTX-2 uses lower guidance scale than Wan2.2
@@ -69,7 +72,7 @@ class LTX2Config:
     # Generation quality settings
     use_fp16: bool = True          # Use FP16 for faster inference
     enable_vae_slicing: bool = True  # Reduce VRAM usage for long videos
-    enable_model_cpu_offload: bool = True  # REQUIRED when running Whisper + LTX-2 together (even on 40GB GPUs)
+    enable_model_cpu_offload: bool = True  # Kept for config compat; actual offload strategy is always sequential for <80GB GPUs
 
 
 class LTX2FastGenerator:
@@ -233,32 +236,42 @@ class LTX2FastGenerator:
         
         _log_cuda_memory("after pipeline load")
         
-        # Memory optimization strategy:
-        # LTX-2 needs ~35GB+ VRAM for full GPU loading
-        # Text encoder alone is ~24GB, so we need CPU offload for 40GB GPUs
+        # Memory optimization strategy for LTX-2 (19B parameter model):
+        # At bfloat16, transformer weights alone are ~38GB.
+        # - enable_model_cpu_offload(): moves whole sub-models to CPU between calls,
+        #   but the 19B transformer still occupies GPU fully during each denoising step → OOM on 40GB
+        # - enable_sequential_cpu_offload(): hooks individual layers, only one layer
+        #   on GPU at a time → much lower peak VRAM, required for <80GB GPUs
         total_gb = getattr(self, 'total_gb', 0)
         print(f"[LTX-2] Applying memory optimizations for {total_gb:.1f}GB GPU...", flush=True)
         
-        # Always use some form of CPU offload to fit on 40GB
-        # This keeps transformer on GPU but moves text encoder/VAE as needed
-        if hasattr(self.pipe, 'enable_model_cpu_offload'):
-            print("[LTX-2] Enabling model CPU offload (text encoder on CPU)...", flush=True)
+        if total_gb >= 80:
+            # H100/A100-80GB: load everything on GPU, no offload needed
+            print("[LTX-2] 80GB+ GPU detected: loading fully on GPU (no offload)...", flush=True)
             try:
-                self.pipe.enable_model_cpu_offload()
-                print("[LTX-2] Model CPU offload enabled", flush=True)
-            except Exception as e:
-                print(f"[WARN] Model CPU offload failed: {e}", flush=True)
-                # Fall back to moving to device
                 self.pipe = self.pipe.to(self.device)
+                print("[LTX-2] Pipeline moved to GPU", flush=True)
+            except Exception as e:
+                print(f"[WARN] Failed to move pipeline to GPU: {e}", flush=True)
         else:
-            # Sequential offload as last resort (slowest but works)
-            print("[LTX-2] Enabling sequential CPU offload...", flush=True)
+            # For <80GB GPUs (including 40GB A100/A6000): sequential CPU offload is REQUIRED.
+            # enable_model_cpu_offload() is NOT sufficient because the 19B transformer
+            # needs all its weights on GPU simultaneously during the denoising forward pass,
+            # which exceeds 40GB. Sequential offload streams individual layers, keeping
+            # peak GPU usage well under 40GB.
+            print(f"[LTX-2] {total_gb:.1f}GB GPU: enabling sequential CPU offload (layer-by-layer streaming)...", flush=True)
+            print("[LTX-2] Note: enable_model_cpu_offload() is NOT sufficient for LTX-2 on <80GB GPUs.", flush=True)
             try:
                 self.pipe.enable_sequential_cpu_offload()
                 print("[LTX-2] Sequential CPU offload enabled", flush=True)
             except Exception as e:
-                print(f"[WARN] Sequential CPU offload failed: {e}", flush=True)
-                self.pipe = self.pipe.to(self.device)
+                print(f"[WARN] Sequential CPU offload failed: {e}, falling back to model CPU offload", flush=True)
+                try:
+                    self.pipe.enable_model_cpu_offload()
+                    print("[LTX-2] Model CPU offload enabled (fallback)", flush=True)
+                except Exception as e2:
+                    print(f"[WARN] Model CPU offload also failed: {e2}", flush=True)
+                    self.pipe = self.pipe.to(self.device)
         
         # Enable VAE slicing to reduce VRAM during decoding
         if self.config.enable_vae_slicing:
@@ -363,6 +376,7 @@ class LTX2FastGenerator:
                 width=width,
                 height=height,
                 num_frames=num_frames,
+                frame_rate=float(self.config.fps),
                 num_inference_steps=self.config.num_inference_steps,
                 guidance_scale=self.config.guidance_scale,
                 generator=generator,
