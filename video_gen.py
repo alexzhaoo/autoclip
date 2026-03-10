@@ -109,8 +109,8 @@ class LTX2FastGenerator:
             total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
             print(f"[LTX-2] GPU VRAM: {total_gb:.1f}GB")
             
-            if total_gb >= 35:  # LTX-2 needs ~38GB, but 35GB threshold gives buffer
-                print(f"[LTX-2] ✅ {total_gb:.1f}GB VRAM detected! Running fully on GPU (no CPU offload).")
+            if total_gb >= 80:  # Only skip CPU offload for 80GB+ GPUs (H100)
+                print(f"[LTX-2] ✅ {total_gb:.1f}GB VRAM detected! Running fully on GPU.")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=False)
                 else:
@@ -126,9 +126,9 @@ class LTX2FastGenerator:
                         enable_vae_slicing=config.enable_vae_slicing,
                         enable_model_cpu_offload=False,  # Keep on GPU!
                     )
-            elif total_gb < 35 and not (config and config.enable_model_cpu_offload):
-                print(f"[LTX-2] WARNING: LTX-2 needs ~38GB VRAM. You have {total_gb:.1f}GB.")
-                print(f"[LTX-2] Using sequential CPU offload (generation will be slower).")
+            elif total_gb < 80 and not (config and config.enable_model_cpu_offload):
+                print(f"[LTX-2] INFO: Using model CPU offload for {total_gb:.1f}GB GPU.")
+                print(f"[LTX-2] Text encoder (~24GB) on CPU, transformer on GPU.")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=True)
                 else:
@@ -232,35 +232,47 @@ class LTX2FastGenerator:
         
         _log_cuda_memory("after pipeline load")
         
-        # Enable CPU offload BEFORE moving to device (this is key!)
-        print(f"[LTX-2] enable_model_cpu_offload config value: {self.config.enable_model_cpu_offload}", flush=True)
-        if self.config.enable_model_cpu_offload:
-            print("[LTX-2] Enabling sequential CPU offload (saves VRAM)...", flush=True)
+        # Memory optimization strategy:
+        # LTX-2 needs ~35GB+ VRAM for full GPU loading
+        # Text encoder alone is ~24GB, so we need CPU offload for 40GB GPUs
+        print(f"[LTX-2] Applying memory optimizations for {total_gb:.1f}GB GPU...", flush=True)
+        
+        # Always use some form of CPU offload to fit on 40GB
+        # This keeps transformer on GPU but moves text encoder/VAE as needed
+        if hasattr(self.pipe, 'enable_model_cpu_offload'):
+            print("[LTX-2] Enabling model CPU offload (text encoder on CPU)...", flush=True)
+            try:
+                self.pipe.enable_model_cpu_offload()
+                print("[LTX-2] Model CPU offload enabled", flush=True)
+            except Exception as e:
+                print(f"[WARN] Model CPU offload failed: {e}", flush=True)
+                # Fall back to moving to device
+                self.pipe = self.pipe.to(self.device)
+        else:
+            # Sequential offload as last resort (slowest but works)
+            print("[LTX-2] Enabling sequential CPU offload...", flush=True)
             try:
                 self.pipe.enable_sequential_cpu_offload()
                 print("[LTX-2] Sequential CPU offload enabled", flush=True)
             except Exception as e:
-                print(f"[WARN] Sequential CPU offload failed: {e}, trying model CPU offload...", flush=True)
-                try:
-                    self.pipe.enable_model_cpu_offload()
-                    print("[LTX-2] Model CPU offload enabled", flush=True)
-                except Exception as e2:
-                    print(f"[WARN] Model CPU offload also failed: {e2}", flush=True)
-                    # Last resort: move to device and hope for the best
-                    self.pipe = self.pipe.to(self.device)
-        else:
-            # Only move to device if not using CPU offload
-            print(f"[LTX-2] Moving pipeline to {self.device} (no CPU offload)...", flush=True)
-            self.pipe = self.pipe.to(self.device)
-            print(f"[LTX-2] Pipeline moved to {self.device}", flush=True)
+                print(f"[WARN] Sequential CPU offload failed: {e}", flush=True)
+                self.pipe = self.pipe.to(self.device)
         
-        # Enable VAE slicing (always try this)
+        # Enable VAE slicing to reduce VRAM during decoding
         if self.config.enable_vae_slicing:
             try:
                 self.pipe.enable_vae_slicing()
                 print("[LTX-2] VAE slicing enabled", flush=True)
             except Exception as e:
                 print(f"[WARN] VAE slicing failed: {e}", flush=True)
+        
+        # Enable VAE tiling for large resolutions
+        if hasattr(self.pipe, 'vae') and hasattr(self.pipe.vae, 'enable_tiling'):
+            try:
+                self.pipe.vae.enable_tiling()
+                print("[LTX-2] VAE tiling enabled", flush=True)
+            except Exception as e:
+                print(f"[WARN] VAE tiling failed: {e}", flush=True)
         
         _log_cuda_memory("after optimizations")
         
@@ -449,7 +461,7 @@ def create_ltx2_generator(
     import torch
     if torch.cuda.is_available():
         total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        use_cpu_offload = total_gb < 35  # Use CPU offload only if < 35GB (LTX-2 needs ~38GB)
+        use_cpu_offload = True  # Always use CPU offload - LTX-2 text encoder is 24GB alone
     else:
         use_cpu_offload = True
     
@@ -461,8 +473,8 @@ def create_ltx2_generator(
         enable_vae_slicing=True,
     )
     
-    offload_status = "enabled" if use_cpu_offload else "disabled"
-    print(f"[LTX-2] Creating generator: {resolution} {aspect_ratio}, CPU offload: {offload_status}")
+    print(f"[LTX-2] Creating generator: {resolution} {aspect_ratio}")
+    print(f"[LTX-2] Model CPU offload: ENABLED (text encoder on CPU)")
     
     return LTX2FastGenerator(config=config)
 
