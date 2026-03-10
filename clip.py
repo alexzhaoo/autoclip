@@ -534,61 +534,71 @@ def concat_videos(video_list, output_file):
     subprocess.run(cmd, check=True)
 
 
-def extract_clips(transcript, var ,max_clips=2):
-    # Truncate transcript at the last sentence before 5000 chars
-    prompt = f"""
+def extract_clips(transcript, chunk_idx=0, max_clips=2):
+    """Extract clips from transcript using GPT."""
+    import json
+    
+    # Sanitize transcript to avoid JSON parsing issues
+    def sanitize_text(text):
+        # Remove control characters (except newlines and tabs)
+        text = ''.join(char for char in text if char == '\n' or char == '\t' or ord(char) >= 32)
+        return text
+    
+    safe_transcript = sanitize_text(transcript)
+    
+    # Truncate if too long (GPT has context limits)
+    max_chars = 8000
+    if len(safe_transcript) > max_chars:
+        print(f"   Warning: Truncating transcript from {len(safe_transcript)} to {max_chars} chars")
+        safe_transcript = safe_transcript[:max_chars].rsplit('.', 1)[0] + '.'
+    
+    prompt_content = f"""From the transcript below, extract {max_clips} short clips between 20-30 seconds that are interesting and would perform well on TikTok or Instagram Reels.
 
-       From the transcript below, extract {max_clips} short clips between 20-30 seconds that are interesting and would perform well on TikTok or Instagram Reels.
-        
-        Each clip must be completely self-contained:
-        - Start at the **beginning of a complete sentence or clear idea**
-        - Prefer clips that begin with a strong hook or can grab attention in the first 2 seconds
+Each clip must be completely self-contained:
+- Start at the beginning of a complete sentence or clear idea
+- Prefer clips that begin with a strong hook or can grab attention in the first 2 seconds
 
-        For example, if a clip ends with “That’s the impact of cortisol,” 
-        the clip must begin with the earliest point where cortisol or its symptoms are 
-        first mentioned — not at the emotional peak. Do not overextend the length of clips.
+For example, if a clip ends with "That's the impact of cortisol," 
+the clip must begin with the earliest point where cortisol or its symptoms are 
+first mentioned - not at the emotional peak. Do not overextend the length of clips.
 
-         Prioritize clips that:
-        - Contain a surprising fact, bold opinion, or viral insight
-        - Feel emotionally powerful, inspiring, or funny
-        - Could make someone stop scrolling within the first 2–3 seconds
+Prioritize clips that:
+- Contain a surprising fact, bold opinion, or viral insight
+- Feel emotionally powerful, inspiring, or funny
+- Could make someone stop scrolling within the first 2-3 seconds
 
-        When providing the "transcript_text" for each clip:
-        - Always copy the exact sentences from the transcript provided (verbatim).
-        - Do not rewrite or paraphrase.
+When providing the transcript_text for each clip:
+- Always copy the exact sentences from the transcript provided (verbatim).
+- Do not rewrite or paraphrase.
 
-        Do not be afraid to use emojis in the hook.
+Do not be afraid to use emojis in the hook.
 
-        Return a JSON array like:
-        [
-        {{
-            "start": "HH:MM:SS",
-            "end": "HH:MM:SS",
-            "hook": "1-sentence attention grabber",
-            "caption": "3-line punchy caption",
-            "transcript_text": "Full transcript text of the clip"
-        }}
-        ]
+Return a JSON array like:
+[
+    {{
+        "start": "HH:MM:SS",
+        "end": "HH:MM:SS",
+        "hook": "1-sentence attention grabber",
+        "caption": "3-line punchy caption",
+        "transcript_text": "Full transcript text of the clip"
+    }}
+]
 
-        Transcript:
-        {transcript}
-        """
+Transcript:
+{safe_transcript}"""
 
-
-    response = client.chat.completions.create(
-        model="gpt-5-mini-2025-08-07",
-        messages=[ 
-            {"role": "system", "content": "   You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
-            {"role": "user", "content": prompt}
-        ],
-
-    )
-    print("GPT response:", response)
     try:
+        response = client.chat.completions.create(
+            model="gpt-5-mini-2025-08-07",
+            messages=[
+                {"role": "system", "content": "You are a smart short-form content editor with a talent for creating viral, Gen Z-friendly edutainment."},
+                {"role": "user", "content": prompt_content}
+            ],
+        )
+        print(f"   [Chunk {chunk_idx}] GPT response received")
         return safe_parse_gpt_response(response.choices[0].message.content)
     except Exception as e:
-        print("❌ GPT response parsing failed:", e)
-        print(response.choices[0].message.content)
+        print(f"   Error: GPT API error in chunk {chunk_idx}: {str(e)[:200]}")
         return []
 
 def get_words_in_range(words, clip_start, clip_end):
