@@ -546,8 +546,9 @@ def extract_clips(transcript, chunk_idx=0, max_clips=2):
     
     safe_transcript = sanitize_text(transcript)
     
-    # Truncate if too long (GPT has context limits)
-    max_chars = 8000
+    # Truncate if too long (GPT-5-mini has 128K token context, ~100K chars)
+    # 30000 chars is safe (~6K tokens) and covers ~20-25 min of speech per chunk
+    max_chars = 30000
     if len(safe_transcript) > max_chars:
         print(f"   Warning: Truncating transcript from {len(safe_transcript)} to {max_chars} chars")
         safe_transcript = safe_transcript[:max_chars].rsplit('.', 1)[0] + '.'
