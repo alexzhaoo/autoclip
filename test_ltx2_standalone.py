@@ -53,13 +53,13 @@ def test_ltx2_import():
         return False
 
 
-def test_ltx2_generation(resolution="480p", fast_mode=True):
+def test_ltx2_generation(resolution="480p", aspect_ratio="16:9", fast_mode=True):
     """Test actual LTX-2 video generation."""
     print("\n" + "=" * 60)
-    print(f"STEP 3: LTX-2 Generation ({resolution}, fast_mode={fast_mode})")
+    print(f"STEP 3: LTX-2 Generation ({resolution} {aspect_ratio}, fast_mode={fast_mode})")
     print("=" * 60)
     
-    output_path = f"test_ltx2_{resolution}.mp4"
+    output_path = f"test_ltx2_{resolution}_{aspect_ratio.replace(':', '')}.mp4"
     
     # Clean up any previous test
     if os.path.exists(output_path):
@@ -72,7 +72,7 @@ def test_ltx2_generation(resolution="480p", fast_mode=True):
         print("   Creating generator...")
         generator = create_ltx2_generator(
             resolution=resolution,
-            aspect_ratio="16:9",
+            aspect_ratio=aspect_ratio,
             fast_mode=fast_mode
         )
         
@@ -104,7 +104,7 @@ def test_ltx2_generation(resolution="480p", fast_mode=True):
         print(f"✅ Generation successful!")
         print(f"   File: {output_path}")
         print(f"   Size: {file_size / 1024:.1f} KB")
-        print(f"   Time: {elapsed:.1f}s ({elapsed/20:.1f}s per step)")
+        print(f"   Time: {elapsed:.1f}s ({elapsed/generator.config.num_inference_steps:.1f}s per step)")
         
         return True
         
@@ -140,11 +140,15 @@ def main():
     
     # Parse arguments
     resolution = "480p"
+    aspect_ratio = "16:9"
     if len(sys.argv) > 1:
         resolution = sys.argv[1]  # 480p, 720p, 1080p
+    if len(sys.argv) > 2:
+        aspect_ratio = sys.argv[2]  # 16:9 or 9:16
     
     print(f"\nTest configuration:")
     print(f"   Resolution: {resolution}")
+    print(f"   Aspect Ratio: {aspect_ratio}")
     print(f"   Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
     
     # Run tests
@@ -152,7 +156,7 @@ def main():
     
     results.append(("CUDA Basics", test_basic_cuda()))
     results.append(("LTX-2 Import", test_ltx2_import()))
-    results.append(("LTX-2 Generation", test_ltx2_generation(resolution)))
+    results.append(("LTX-2 Generation", test_ltx2_generation(resolution, aspect_ratio)))
     test_memory_usage()
     
     # Summary
@@ -168,7 +172,7 @@ def main():
     
     if all_passed:
         print("\n✅ All tests passed! LTX-2 is working correctly.")
-        print(f"\nTest video saved to: test_ltx2_{resolution}.mp4")
+        print(f"\nTest video saved to: test_ltx2_{resolution}_{aspect_ratio.replace(':', '')}.mp4")
     else:
         print("\n❌ Some tests failed. Check errors above.")
     
