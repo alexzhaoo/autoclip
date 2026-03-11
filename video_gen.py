@@ -113,7 +113,7 @@ class LTX2FastGenerator:
             self.total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
             print(f"[LTX-2] GPU VRAM: {self.total_gb:.1f}GB")
             
-            if self.total_gb >= 80:  # Only skip CPU offload for 80GB+ GPUs (H100)
+            if self.total_gb >= 75:  # 80GB+ GPUs (A100/H100 report ~79GB usable)
                 print(f"[LTX-2] ✅ {self.total_gb:.1f}GB VRAM detected! Running fully on GPU.")
                 if config is None:
                     config = LTX2Config(enable_model_cpu_offload=False)
@@ -245,7 +245,7 @@ class LTX2FastGenerator:
         total_gb = getattr(self, 'total_gb', 0)
         print(f"[LTX-2] Applying memory optimizations for {total_gb:.1f}GB GPU...", flush=True)
         
-        if total_gb >= 80:
+        if total_gb >= 75:
             # H100/A100-80GB: load everything on GPU, no offload needed
             print("[LTX-2] 80GB+ GPU detected: loading fully on GPU (no offload)...", flush=True)
             try:
@@ -477,7 +477,8 @@ def create_ltx2_generator(
     import torch
     if torch.cuda.is_available():
         total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        use_cpu_offload = True  # Always use CPU offload - LTX-2 text encoder is 24GB alone
+        # 80GB+ GPUs can handle full model without offload
+        use_cpu_offload = total_gb < 80
     else:
         use_cpu_offload = True
     
@@ -489,8 +490,9 @@ def create_ltx2_generator(
         enable_vae_slicing=True,
     )
     
+    offload_status = "ENABLED (layer streaming)" if use_cpu_offload else "DISABLED (full GPU)"
     print(f"[LTX-2] Creating generator: {resolution} {aspect_ratio}")
-    print(f"[LTX-2] Model CPU offload: ENABLED (text encoder on CPU)")
+    print(f"[LTX-2] Model CPU offload: {offload_status}")
     
     return LTX2FastGenerator(config=config)
 
