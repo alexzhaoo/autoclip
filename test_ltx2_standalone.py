@@ -84,6 +84,7 @@ def test_ltx2_generation(resolution="480p", aspect_ratio="16:9", fast_mode=True)
         
         result = generator.generate_clip(
             prompt="Vertical portrait shot, waist-up of a person typing on a laptop at a desk. The workspace is well-lit by a warm amber desk lamp and soft ambient room lighting. The person fills the center of the vertical frame.Slow camera push in.",
+            output_path=output_path,
             duration=2.0,  # 2 seconds
             seed=42  # Reproducible
         )
