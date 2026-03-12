@@ -457,7 +457,7 @@ class Wan22LightX2VGenerator(LTX2FastGenerator):
 def create_ltx2_generator(
     resolution: str = "480p",
     aspect_ratio: str = "16:9",
-    fast_mode: bool = True,
+    fast_mode: bool = False,  # Default to quality mode (30 steps) for better results
 ) -> LTX2FastGenerator:
     """Factory function to create LTX-2 generator with preset configurations."""
     resolutions = {
@@ -471,6 +471,7 @@ def create_ltx2_generator(
         raise ValueError(f"Unknown resolution: {resolution}")
     
     width, height = resolutions[resolution][aspect_ratio]
+    # 20 steps = fast, 30 steps = quality, 40+ steps = best quality
     num_steps = 20 if fast_mode else 30
     
     # Auto-configure based on available VRAM

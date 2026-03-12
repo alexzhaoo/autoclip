@@ -157,25 +157,47 @@ class ProductionBRollAnalyzer:
             VISUAL_PROMPT – vivid, cinematic (LTX-2 optimized)
             reason - why this clip fits and which transcript line it illustrates
 
-            Suggest clear, engaging visuals with DYNAMIC MOVEMENT.
-            IMPORTANT: Use the FULL CONTEXT to understand the meaning of split sentences.
-            ALWAYS specify motion: camera movement AND/OR subject movement.
-            Ensure Symmetrical Composition where natural.
-
-            Use diverse visual categories WITH MOTION:
-            - Lifestyle & work: people walking, gesturing, objects being manipulated
-            - Technology: screens animating, data flowing, lights pulsing
-            - Nature: wind blowing, water flowing, clouds drifting
-            - Creative processes: materials transforming, liquids mixing
-            - Abstract: particles flowing, shapes morphing, waves rippling
-
-            Specify camera angle, lighting, color, and textures.
-            Avoid: Generic close-ups of hands unless explicitly described.
-
-            Example VISUAL_PROMPTs (NOTE THE MOTION VERBS):
-            Smooth aerial dolly shot gliding over a city at dusk, camera moving forward steadily, windows glowing, soft haze drifting, symmetrical skyline.
-            Macro shot of vibrant ink droplets spreading and swirling dynamically through clear water, colors bleeding outward, symmetrical flow patterns forming.
-            Fluid tracking shot following a scientist walking through a bright lab, camera moving smoothly alongside, reflections shifting on glass panels.
+            Create RELEVANT visuals for LTX-2 video generation using this EXACT structure:
+            
+            LTX-2 PROMPT BEST PRACTICES:
+            
+            1. FORMAT: Write as a SINGLE FLOWING PARAGRAPH (not bullet points)
+            2. LENGTH: Keep under 200 words
+            3. TENSE: Use present tense verbs only
+            4. STRUCTURE (in order):
+               - Start with MAIN ACTION in one clear sentence
+               - Add specific movements and gestures (visual cues, not emotions)
+               - Describe subject appearance precisely
+               - Include background/environment details
+               - Specify camera angle and movement
+               - Describe lighting and atmosphere
+            
+            5. CRITICAL RULES:
+               - SINGLE SUBJECT only (one person or main object)
+               - NO detailed faces (use hands, silhouettes, or back of head)
+               - NO text, logos, or signs (LTX-2 can't generate readable text)
+               - NO complex physics (juggling, fast chaotic motion)
+               - NO multiple interacting people
+               - NO emotional labels like "sad" or "happy" - describe visual cues instead
+            
+            6. WHAT WORKS WELL:
+               - Atmosphere: fog, mist, golden hour, rain, reflections
+               - Lighting: backlighting, soft rim light, warm tungsten, neon glow
+               - Camera: slow dolly, gentle pan, static tripod, tracking shot
+               - Settings: noir, analog film look, cinematic color grading
+            
+            EXAMPLE GOOD PROMPTS:
+            
+            TOPIC: "Stressed at work"
+            PROMPT: "A person sits at a cluttered desk, their hands typing rapidly on a laptop keyboard. Papers and coffee cups scatter across the surface. The camera slowly pushes in from a medium shot, revealing a single desk lamp casting warm amber light across the workspace. Outside the window behind them, city lights blur in the darkness. The scene feels atmospheric with subtle film grain and soft shadows. Gentle ambient office sounds. Static camera with slow dolly movement, shallow depth of field."
+            
+            TOPIC: "Coffee and productivity"
+            PROMPT: "Steam rises slowly from a ceramic coffee cup sitting on a wooden desk. Morning sunlight streams through a nearby window, catching the wisps of steam in golden light. The camera orbits slowly around the cup at 45 degrees, keeping the focus sharp on the rim while the background blurs into soft bokeh. Dust particles drift through the sunbeam. Warm color palette with soft contrast, peaceful morning atmosphere."
+            
+            TOPIC: "City life"
+            PROMPT: "Rain falls gently on a wet city street at night, neon signs reflecting in puddles on the pavement. The camera tracks slowly forward at eye level as raindrops create ripples in the water. Colorful neon lights from storefronts cast red and blue glows across the wet surfaces. Steam rises from a street vent in the background. Moody noir atmosphere with high contrast lighting, cinematic color grading, subtle halation around bright lights."
+            
+            WRITE THE PROMPT AS ONE PARAGRAPH. NO BULLET POINTS. NO LISTS.
 
             Return ONLY a JSON array:
             [
@@ -194,7 +216,7 @@ class ProductionBRollAnalyzer:
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are an expert video editor specializing in engaging short-form content and AI video generation. You create detailed, cinematic prompts optimized for LTX-2 text-to-video generation across diverse visual categories including scientific, abstract, nature, lifestyle, technology, and artistic themes."
+                        "content": "You are an expert cinematographer and video editor specializing in LTX-2 AI video generation. You write prompts that follow Lightricks' official guidelines: single flowing paragraph, present tense, under 200 words, starting with main action, including camera movement, lighting, and atmosphere. You avoid text/logos, detailed faces, multiple people, complex physics, and emotional labels. You focus on visual storytelling with single subjects, atmospheric lighting, and clean camera language."
                     },
                     {"role": "user", "content": prompt}
                 ]
@@ -485,9 +507,9 @@ class ProductionBRollPipeline:
 
 # Configuration
 PRODUCTION_CONFIG = {
-    "resolution": os.getenv("LTX2_RESOLUTION", "480p"),
-    "aspect_ratio": os.getenv("LTX2_ASPECT_RATIO", "16:9"),
-    "fast_mode": os.getenv("LTX2_FAST_MODE", "true").lower() in ("true", "1", "yes"),
+    "resolution": os.getenv("LTX2_RESOLUTION", "1080p"),  # Default to 1080p for quality
+    "aspect_ratio": os.getenv("LTX2_ASPECT_RATIO", "9:16"),  # Default to vertical for TikTok
+    "fast_mode": os.getenv("LTX2_FAST_MODE", "false").lower() in ("true", "1", "yes"),  # Default to quality mode (30 steps)
 }
 
 

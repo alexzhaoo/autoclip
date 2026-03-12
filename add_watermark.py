@@ -53,31 +53,11 @@ def add_watermark_to_video(input_video, watermark_path, output_video, watermark_
     # This tells FFmpeg to stop encoding when the video (input 0) ends, 
     # ignoring the infinite loop of the watermark (input 1).
     # Also using scale=-2 to ensure even width (important for some codecs)
-    # Removed format=rgba and format=auto to match the working manual test
     filter_graph = (
         f"[1:v]scale=-2:{watermark_height}[wm];"
         f"[0:v][wm]overlay=(W-w)/2:H-h-{bottom_padding}:shortest=1[outv]"
     )
     
-    if cuda_available:
-        print(f"    🚀 Using GPU acceleration (NVENC)")
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", input_video,
-            "-loop", "1", "-i", watermark_path,
-            "-filter_complex", filter_graph,
-            "-map", "[outv]",
-            "-map", "0:a?",
-            "-c:v", "h264_nvenc",
-            "-preset", "p4",
-            "-rc", "vbr",
-            "-cq", "18",
-            "-b:v", "10M",
-            "-maxrate", "15M",
-            "-c:a", "copy",
-            "-pix_fmt", "yuv420p",
-            output_video
-        ]
     if cuda_available:
         print(f"    🚀 Using GPU acceleration (NVENC)")
         cmd = [

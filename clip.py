@@ -428,25 +428,24 @@ def create_grey_freeze_frame(input_clip, output_clip, duration):
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    # Set crop size to not exceed video dimensions (same as overlay_captions)
-    pre_crop_height = min(1920, height)
-    pre_crop_width = int(pre_crop_height * 9 / 16)
-    pre_crop_width = min(pre_crop_width, width)
+    # Smart crop to 9:16 without upscaling (same as main cropping)
+    target_h = min(1920, height)
+    target_w = int(target_h * 9 / 16)
+    target_w = min(target_w, width)
 
     region = detect_speaker_face_region(input_clip)
     crop_x = choose_crop_x(
         frame_width=width,
-        crop_width=pre_crop_width,
+        crop_width=target_w,
         preferred_center_x=region["center_x"],
         face_left_x=region.get("face_left_x"),
         face_right_x=region.get("face_right_x"),
     )
-    crop_y = 0
 
     # FFmpeg video filter: extract first frame -> crop -> grey filter -> loop
     vf_filter = (
         f"select='eq(n,0)',loop=loop=-1:size=1:start=0,"
-        f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
+        f"crop={target_w}:{target_h}:{crop_x}:0,"
         f"format=gray,fps=30"
     )
 
@@ -946,14 +945,20 @@ def overlay_captions(video_file, ass_file, output_file):
             )
             crop_y = 0  # You can adjust this if you want vertical centering
 
-            # QUALITY FIX: Crop but don't upscale yet - do final scaling only
-            # This avoids double scaling that causes quality degradation
-            print(f"  📏 Quality improvement: {width}x{height} → crop to {pre_crop_width}x{pre_crop_height} → scale to 1080x1920")
+            # For 1080p input: crop to 1080x1920 region (no zoom, just pan)
+            # This maintains original resolution without upscaling artifacts
+            target_width = min(1080, width)
+            target_height = min(1920, height)
+            
+            # If input is wider than 9:16, crop the sides (center on face)
+            # If input is taller, we keep full height and crop width
+            crop_w = min(target_width, int(target_height * 9 / 16))
+            crop_h = target_height
+            
+            print(f"  📏 Smart crop: {width}x{height} → crop {crop_w}x{crop_h} (centered on face) → native resolution")
             vf_filter = (
-                f"crop={pre_crop_width}:{pre_crop_height}:{crop_x}:{crop_y},"
-                f"scale=1080:1920,"  # Scale to 1080p 9:16 for better quality/performance balance
-                f"eq=contrast=1.2:saturation=1.5,"
-                f"hue=s=1.1,"
+                f"crop={crop_w}:{crop_h}:{crop_x}:0,"  # Crop to 9:16 region
+                f"eq=contrast=1.1:saturation=1.2,"
                 f"ass={ass_file_ffmpeg}"
             )
 
@@ -964,8 +969,7 @@ def overlay_captions(video_file, ass_file, output_file):
             "-c:v", "libx264",  # Use CPU encoding as fallback
             "-preset", "slow",  # Better quality preset
             "-crf", "18",  # Higher quality (lower CRF)
-            "-c:a", "aac",
-            "-b:a", "192k",
+            "-c:a", "copy",  # Copy audio without re-encoding to preserve quality
             "-movflags", "+faststart",
             "-pix_fmt", "yuv420p",
             output_file
@@ -988,8 +992,7 @@ def overlay_captions(video_file, ass_file, output_file):
                 "-b:v", "15M", # Higher bitrate for better quality
                 "-maxrate", "20M",
                 "-bufsize", "30M",
-                "-c:a", "aac",
-                "-b:a", "192k",
+                "-c:a", "copy",  # Copy audio without re-encoding to preserve quality
                 "-movflags", "+faststart",
                 "-pix_fmt", "yuv420p",
                 output_file
@@ -2148,10 +2151,9 @@ def create_video_with_broll_integration(original_video, broll_info, captions_fil
             # Scale B-roll to match video dimensions
             scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}"
             
-            # CRITICAL FIX: Use setpts to delay the B-roll video to start at the correct time
-            # The B-roll should start playing from time 0 of the B-roll file, but appear at start_time in the main timeline
+            # Use detected FPS from original video to avoid frame rate mismatch
             filter_parts.append(
-                f"[{broll_input}:v]{scale_filter},fps=30,"
+                f"[{broll_input}:v]{scale_filter},fps={fps},"
                 f"trim=start=0:duration={broll_duration:.3f},"
                 f"setpts=PTS+{broll['start_time']:.3f}/TB[{broll_label}]"
             )
@@ -2289,7 +2291,8 @@ def main(video_path, output_dir=None, generate_broll=True):
     segments = [s for s in segments if s["start"] >= 300]
 
     print("[2] Chunking transcript for first-pass extraction...")
-    chunks = chunk_transcript(segments, chunk_duration=600)
+    # 20 minute chunks for better context and fewer API calls
+    chunks = chunk_transcript(segments, chunk_duration=1200)
 
     all_candidate_clips = []
     #TODO UNCOMMENT LATER
@@ -2474,21 +2477,16 @@ def main(video_path, output_dir=None, generate_broll=True):
         two_person = detect_two_person_face_regions(out_file) if enable_two_person_splitscreen else None
         region = None if two_person else detect_speaker_face_region(out_file)
 
-        # Match ffmpeg's scale=2160:3840:force_original_aspect_ratio=increase with a conservative rounding.
-        target_w, target_h = 2160, 3840
-        if w > 0 and h > 0:
-            scale = max(target_w / w, target_h / h)
-        else:
-            scale = 1.0
-
-        # Use ceil so our predicted scaled size is never smaller than the target crop.
-        # (Using floor can under-shoot by 1px due to float rounding, causing FFmpeg crop failures.)
-        scaled_w = int(np.ceil(w * scale)) if w > 0 else target_w
-        scaled_h = int(np.ceil(h * scale)) if h > 0 else target_h
-        scaled_w = max(target_w, scaled_w)
-        scaled_h = max(target_h, scaled_h)
-
-        crop_y = max(0, int((scaled_h - target_h) / 2))
+        # Smart crop to 9:16 without upscaling - maintain original resolution
+        # For 1920x1080 input: crop ~608x1080 region (9:16 ratio) centered on face
+        target_h = min(1920, h)  # Use original height if <= 1920
+        target_w = int(target_h * 9 / 16)  # 9:16 width
+        target_w = min(target_w, w)  # Don't exceed video width
+        
+        scale = 1.0  # No scaling for coordinate conversion
+        scaled_w = w
+        scaled_h = h
+        crop_y = 0  # Keep full height, only crop horizontally
 
         if two_person:
             # Split-screen: show both detected faces side-by-side.
@@ -2542,7 +2540,7 @@ def main(video_path, output_dir=None, generate_broll=True):
                 "-map", "[v]",
                 "-map", "0:a?",
                 "-c:a", "copy",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:v", "libx264", "-preset", "slow", "-crf", "18",
                 cropped_video,
             ]
         else:
@@ -2560,11 +2558,12 @@ def main(video_path, output_dir=None, generate_broll=True):
                 min_margin_px=48,
             )
 
+            # Simple crop to 9:16 - no upscaling, just pan to center on face
             crop_cmd = [
                 "ffmpeg", "-y", "-i", out_file,
-                "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}:{crop_x}:{crop_y},setsar=1:1",
+                "-vf", f"crop={target_w}:{target_h}:{crop_x}:0,setsar=1:1",
                 "-c:a", "copy",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:v", "libx264", "-preset", "slow", "-crf", "18",
                 cropped_video
             ]
         
