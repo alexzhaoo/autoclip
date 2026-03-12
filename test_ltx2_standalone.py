@@ -83,8 +83,7 @@ def test_ltx2_generation(resolution="480p", aspect_ratio="16:9", fast_mode=True)
         start = time.time()
         
         result = generator.generate_clip(
-            prompt="Medium shot of a person typing on a laptop at a dark desk. A single desk lamp casts warm amber light across the keyboard. Shallow depth of field blurring the background. Slow camera push in.",
-            output_path=output_path,
+            prompt="Vertical portrait shot, waist-up of a person typing on a laptop at a desk. The workspace is well-lit by a warm amber desk lamp and soft ambient room lighting. The person fills the center of the vertical frame.Slow camera push in.",
             duration=2.0,  # 2 seconds
             seed=42  # Reproducible
         )
