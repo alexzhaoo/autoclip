@@ -77,13 +77,13 @@ def test_ltx2_generation(resolution="480p", aspect_ratio="16:9", fast_mode=True)
         )
         
         print("   Generating test video (this may take 1-5 minutes)...")
-        print("   Prompt: 'A serene lake at sunset, gentle ripples on water'")
+        print("   Prompt: 'A person sits at a cluttered desk, their hands typing rapidly on a laptop keyboard. Papers and coffee cups scatter across the surface. The camera slowly pushes in from a medium shot, revealing a single desk lamp casting warm amber light across the workspace. Outside the window behind them, city lights blur in the darkness. The scene feels atmospheric with subtle film grain and soft shadows. Gentle ambient office sounds. Static camera with slow dolly movement, shallow depth of field.'")
         
         import time
         start = time.time()
         
         result = generator.generate_clip(
-            prompt="A serene lake at sunset, gentle ripples on water, mountains in background",
+            prompt="A person sits at a cluttered desk, their hands typing rapidly on a laptop keyboard. Papers and coffee cups scatter across the surface. The camera slowly pushes in from a medium shot, revealing a single desk lamp casting warm amber light across the workspace. Outside the window behind them, city lights blur in the darkness. The scene feels atmospheric with subtle film grain and soft shadows. Gentle ambient office sounds. Static camera with slow dolly movement, shallow depth of field.",
             output_path=output_path,
             duration=2.0,  # 2 seconds
             seed=42  # Reproducible
