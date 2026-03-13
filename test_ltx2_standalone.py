@@ -83,7 +83,7 @@ def test_ltx2_generation(resolution="480p", aspect_ratio="16:9", fast_mode=True)
         start = time.time()
         
         result = generator.generate_clip(
-            prompt="A person sits at a cluttered desk, their hands typing rapidly on a laptop keyboard. Papers and coffee cups scatter across the surface. The camera slowly pushes in from a medium shot, revealing a single desk lamp casting warm amber light across the workspace. . The scene feels atmospheric with subtle film grain and soft shadows. Gentle ambient office sounds. ",
+            prompt="A ceramic coffee cup sits on a clean wooden table. Bright morning sunlight illuminates the cup from the side. Shallow depth of field. The camera slowly orbits around the cup. ",
             output_path=output_path,
             duration=2.0,  # 2 seconds
             seed=42  # Reproducible

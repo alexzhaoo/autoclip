@@ -159,44 +159,43 @@ class ProductionBRollAnalyzer:
 
             Create RELEVANT visuals for LTX-2 video generation using this EXACT structure:
             
-            LTX-2 PROMPT BEST PRACTICES:
+           LTX-2 PROMPT BEST PRACTICES:
+
+            1. FORMAT: Write as a SINGLE FLOWING PARAGRAPH (not bullet points).
+            2. LENGTH: Keep it extremely concise, strictly under 40 words.
+            3. TENSE: Use present tense verbs only.
+            4. MINIMAL STRUCTURE:
+            - One primary subject performing one simple action.
+            - Basic environment with clear, bright lighting.
+            - ONE simple camera movement (or static).
             
-            1. FORMAT: Write as a SINGLE FLOWING PARAGRAPH (not bullet points)
-            2. LENGTH: Keep under 200 words
-            3. TENSE: Use present tense verbs only
-            4. STRUCTURE (in order):
-               - Start with MAIN ACTION in one clear sentence
-               - Add specific movements and gestures (visual cues, not emotions)
-               - Describe subject appearance precisely
-               - Include background/environment details
-               - Specify camera angle and movement
-               - Describe lighting and atmosphere
-            
-            5. CRITICAL RULES:
-               - SINGLE SUBJECT only (one person or main object)
-               - NO detailed faces (use hands, silhouettes, or back of head)
-               - NO text, logos, or signs (LTX-2 can't generate readable text)
-               - NO complex physics (juggling, fast chaotic motion)
-               - NO multiple interacting people
-               - NO emotional labels like "sad" or "happy" - describe visual cues instead
-            
+            5. CRITICAL RESTRICTIONS (To prevent artifacts):
+            - KEEP IT SIMPLE: Avoid clutter. Do not describe scattered objects or complex backgrounds.
+            - SINGLE SUBJECT ONLY.
+            - NO detailed faces (use hands, silhouettes, or over-the-shoulder framing).
+            - NO text, logos, or signs.
+            - NO complex physics (juggling, chaotic motion, splashing).
+            - NO emotional labels (e.g., "sad" or "happy").
+            - NO auditory descriptions (e.g., "gentle sounds").
+            - NO contradictory camera moves (e.g., choose ONLY "static" OR "slow pan", never both).
+            - NO complex atmospheres (avoid words like "film grain" or "dust particles" as they cause visual noise).
+
             6. WHAT WORKS WELL:
-               - Atmosphere: fog, mist, golden hour, rain, reflections
-               - Lighting: backlighting, soft rim light, warm tungsten, neon glow
-               - Camera: slow dolly, gentle pan, static tripod, tracking shot
-               - Settings: noir, analog film look, cinematic color grading
-            
-            EXAMPLE GOOD PROMPTS:
-            
+            - Lighting: well-lit, soft ambient light, bright daylight, clear shadows.
+            - Camera: slow push in, slow pan, static medium shot.
+            - Framing: 16:9 widescreen, medium shot, close-up.
+
+            EXAMPLE GOOD PROMPTS (Mimic this exact level of simplicity):
+
             TOPIC: "Stressed at work"
-            PROMPT: "A person sits at a cluttered desk, their hands typing rapidly on a laptop keyboard. Papers and coffee cups scatter across the surface. The camera slowly pushes in from a medium shot, revealing a single desk lamp casting warm amber light across the workspace. Outside the window behind them, city lights blur in the darkness. The scene feels atmospheric with subtle film grain and soft shadows. Gentle ambient office sounds. Static camera with slow dolly movement, shallow depth of field."
-            
+            PROMPT: "Medium shot of hands typing rapidly on a laptop keyboard. The clean desk is well-lit by soft ambient room lighting. Shallow depth of field blurs the background. Slow camera push in."
+
             TOPIC: "Coffee and productivity"
-            PROMPT: "Steam rises slowly from a ceramic coffee cup sitting on a wooden desk. Morning sunlight streams through a nearby window, catching the wisps of steam in golden light. The camera orbits slowly around the cup at 45 degrees, keeping the focus sharp on the rim while the background blurs into soft bokeh. Dust particles drift through the sunbeam. Warm color palette with soft contrast, peaceful morning atmosphere."
-            
+            PROMPT: "A ceramic coffee cup sits on a clean wooden table. Bright morning sunlight illuminates the cup from the side. Shallow depth of field. The camera slowly orbits around the cup."
+
             TOPIC: "City life"
-            PROMPT: "Rain falls gently on a wet city street at night, neon signs reflecting in puddles on the pavement. The camera tracks slowly forward at eye level as raindrops create ripples in the water. Colorful neon lights from storefronts cast red and blue glows across the wet surfaces. Steam rises from a street vent in the background. Moody noir atmosphere with high contrast lighting, cinematic color grading, subtle halation around bright lights."
-            
+            PROMPT: "A wet city street at night, clearly illuminated by bright neon signs reflecting in puddles. Steam rises from a single street vent. The camera slowly tracks forward at eye level."
+
             WRITE THE PROMPT AS ONE PARAGRAPH. NO BULLET POINTS. NO LISTS.
 
             Return ONLY a JSON array:
