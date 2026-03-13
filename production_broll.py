@@ -159,44 +159,46 @@ class ProductionBRollAnalyzer:
 
             Create RELEVANT visuals for LTX-2 video generation using this EXACT structure:
             
-           LTX-2 PROMPT BEST PRACTICES:
+           VIDEO GENERATION PROMPT BEST PRACTICES:
 
             1. FORMAT: Write as a SINGLE FLOWING PARAGRAPH (not bullet points).
-            2. LENGTH: Keep it extremely concise, strictly under 40 words.
+            2. LENGTH: Aim for 4–8 descriptive sentences.
             3. TENSE: Use present tense verbs only.
-            4. MINIMAL STRUCTURE:
-            - One primary subject performing one simple action.
-            - Basic environment with clear, bright lighting.
-            - ONE simple camera movement (or static).
-            
+            4. REQUIRED ELEMENTS (include all five):
+               - SHOT: Establish the shot scale and visual style using cinematography terms (e.g., wide establishing shot, intimate close-up, cinematic thriller).
+               - SCENE: Describe lighting conditions, color palette, surface textures, and atmosphere to set mood.
+               - ACTION: Describe the core action as a natural, continuous sequence from beginning to end.
+               - CHARACTER: Include age, hairstyle, clothing, and distinguishing features. Convey emotion through physical cues only, never abstract labels.
+               - CAMERA: Specify one camera movement and when it occurs. Describe what the subject looks like after the move to help the model complete it accurately.
+
             5. CRITICAL RESTRICTIONS (To prevent artifacts):
-            - KEEP IT SIMPLE: Avoid clutter. Do not describe scattered objects or complex backgrounds.
-            - SINGLE SUBJECT ONLY.
-            - NO detailed faces (use hands, silhouettes, or over-the-shoulder framing).
-            - NO text, logos, or signs.
-            - NO complex physics (juggling, chaotic motion, splashing).
-            - NO emotional labels (e.g., "sad" or "happy").
-            - NO auditory descriptions (e.g., "gentle sounds").
-            - NO contradictory camera moves (e.g., choose ONLY "static" OR "slow pan", never both).
-            - NO complex atmospheres (avoid words like "film grain" or "dust particles" as they cause visual noise).
+               - SINGLE CONTINUOUS SHOT: Everything must exist in one unbroken frame. No transitions, no scene changes, no cuts.
+               - All subjects must already be present and visible when the shot begins — do not introduce new elements mid-shot.
+               - NO emotional labels (e.g., "sad", "happy", "terrified") — use physical cues instead (e.g., "jaw set", "knuckles white", "breath misting rapidly").
+               - NO auditory descriptions (e.g., "gentle sounds", "crackling fire").
+               - NO text, logos, or signs in the scene.
+               - NO complex physics (juggling, chaotic splashing, tangled motion).
+               - NO contradictory camera moves — choose only ONE (e.g., static OR slow push in, never both).
+               - NO complex atmospheric noise (avoid "film grain", "dust particles" as they cause visual artifacts).
 
             6. WHAT WORKS WELL:
-            - Lighting: well-lit, soft ambient light, bright daylight, clear shadows.
-            - Camera: slow push in, slow pan, static medium shot.
-            - Framing: 16:9 widescreen, medium shot, close-up.
+               - Lighting: soft ambient light, dramatic single-source light, neon glow, natural daylight, hard shadows.
+               - Camera: slow push in, static wide frame, low-angle tilt upward, slow orbit, ground-level track forward.
+               - Framing: 16:9 widescreen, wide establishing shot, medium shot, intimate close-up.
+               - Atmosphere: steam, fog, rain, mist, bokeh background — used sparingly as one element.
 
-            EXAMPLE GOOD PROMPTS (Mimic this exact level of simplicity):
+            EXAMPLE GOOD PROMPTS (Mimic this exact level of detail and structure):
 
-            TOPIC: "Stressed at work"
-            PROMPT: "Medium shot of hands typing rapidly on a laptop keyboard. The clean desk is well-lit by soft ambient room lighting. Shallow depth of field blurs the background. Slow camera push in."
+            TOPIC: "Abandoned lighthouse during a storm"
+            PROMPT: "A wide cinematic thriller shot frames a crumbling lighthouse perched on jagged coastal rocks mid-storm, a woman in her late 40s already visible on the gallery deck, her silver-streaked hair plastered to her face, gripping the iron railing in a soaked yellow oilskin coat. The color palette is desaturated — deep grey-green ocean swells, a near-black sky cracked by distant lightning, the pale ivory stone of the tower slick with rain. Curtains of rain and sea spray layer the air with atmospheric fog, partially veiling the rocks below. The camera holds in a static wide frame from a low angle on the rocks, keeping both the full height of the lighthouse and the woman on the gallery in frame simultaneously as waves crash against the foreground."
 
-            TOPIC: "Coffee and productivity"
-            PROMPT: "A ceramic coffee cup sits on a clean wooden table. Bright morning sunlight illuminates the cup from the side. Shallow depth of field. The camera slowly orbits around the cup."
+            TOPIC: "Arctic explorer discovering something beneath the ice"
+            PROMPT: "An epic cinematic fantasy shot frames a woman in her late 20s already kneeling at the center of a vast frozen tundra, both gloved palms pressed flat against the translucent ice surface, the faint emerald glow from deep below already visible and pulsing steadily outward in geometric patterns beneath her. The color palette is monochromatic and cold — whites and glacial blues interrupted only by the growing green luminescence casting soft upward light across her fur-lined hood and goggles. Her mouth is slightly open, breath misting in rapid bursts, expression caught between awe and alarm. The camera holds in a wide static frame at ground level, keeping the full expanse of the tundra, the woman, and the glowing geometry beneath the ice all visible within a single unmoving shot as the light below slowly intensifies."
 
-            TOPIC: "City life"
-            PROMPT: "A wet city street at night, clearly illuminated by bright neon signs reflecting in puddles. Steam rises from a single street vent. The camera slowly tracks forward at eye level."
+            TOPIC: "Chess grandmaster in the final moments of a match"
+            PROMPT: "An intimate arthouse shot frames a man in his mid-30s seated over a worn wooden chess board under a single harsh overhead light, his disheveled dark hair and loosened collar visible alongside the full board spread before him. The color palette is high contrast — pale skin against deep shadow, ivory and ebony pieces sharp against the dark felt. His hand hovers motionlessly above a knight, index finger barely grazing its carved head, while his eyes move with glacial precision across the board. The camera pushes in with extreme slowness, stopping only when his face and the near half of the board share the frame equally — his hand remaining suspended mid-air throughout the entire shot."
 
-            WRITE THE PROMPT AS ONE PARAGRAPH. NO BULLET POINTS. NO LISTS.
+            WRITE THE PROMPT AS ONE PARAGRAPH. NO BULLET POINTS. NO LISTS. NO SCENE TRANSITIONS.
 
             Return ONLY a JSON array:
             [
