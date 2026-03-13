@@ -298,6 +298,7 @@ class LTX2VideoGenerator:
         resolution: str = "480p",
         aspect_ratio: str = "16:9",
         fast_mode: bool = True,
+        cache_dir: Optional[str] = None,
     ):
         """Initialize LTX-2 video generator.
         
@@ -305,6 +306,7 @@ class LTX2VideoGenerator:
             resolution: One of "480p", "720p", "1080p"
             aspect_ratio: "16:9" or "9:16"
             fast_mode: Use faster generation settings
+            cache_dir: Directory to cache models (default: ./models/hf_cache)
         """
         from video_gen import create_ltx2_generator
         
@@ -316,6 +318,7 @@ class LTX2VideoGenerator:
                 resolution=resolution,
                 aspect_ratio=aspect_ratio,
                 fast_mode=fast_mode,
+                cache_dir=cache_dir,
             )
             print(f"🎬 LTX-2 Video Generator ready:")
             print(f"  - Resolution: {resolution} ({aspect_ratio})")
@@ -405,6 +408,7 @@ class ProductionBRollPipeline:
         resolution: str = "480p",
         aspect_ratio: str = "16:9",
         fast_mode: bool = True,
+        cache_dir: Optional[str] = None,
     ):
         """Initialize the production pipeline.
         
@@ -412,12 +416,14 @@ class ProductionBRollPipeline:
             resolution: Video resolution (480p, 720p, 1080p)
             aspect_ratio: "16:9" or "9:16"
             fast_mode: Use faster generation settings
+            cache_dir: Directory to cache models (default: ./models/hf_cache)
         """
         self.analyzer = ProductionBRollAnalyzer()
         self.generator = LTX2VideoGenerator(
             resolution=resolution,
             aspect_ratio=aspect_ratio,
             fast_mode=fast_mode,
+            cache_dir=cache_dir,
         )
         self.resolution = resolution
         self.aspect_ratio = aspect_ratio
@@ -516,6 +522,7 @@ def create_production_pipeline(
     resolution: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
     fast_mode: Optional[bool] = None,
+    cache_dir: Optional[str] = None,
 ) -> ProductionBRollPipeline:
     """Factory function to create production B-roll pipeline with LTX-2.
     
@@ -523,14 +530,20 @@ def create_production_pipeline(
         resolution: Video resolution (480p, 720p, 1080p, 4K)
         aspect_ratio: "16:9" or "9:16"
         fast_mode: Use faster generation settings
+        cache_dir: Directory to cache models (default: ./models/hf_cache)
         
     Returns:
         Configured ProductionBRollPipeline instance
     """
+    # Default to local models folder for persistence
+    if cache_dir is None:
+        cache_dir = os.environ.get("LTX2_CACHE_DIR", "./models/hf_cache")
+    
     return ProductionBRollPipeline(
         resolution=resolution or PRODUCTION_CONFIG["resolution"],
         aspect_ratio=aspect_ratio or PRODUCTION_CONFIG["aspect_ratio"],
         fast_mode=fast_mode if fast_mode is not None else PRODUCTION_CONFIG["fast_mode"],
+        cache_dir=cache_dir,
     )
 
 

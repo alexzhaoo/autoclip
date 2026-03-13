@@ -83,7 +83,7 @@ def test_ltx2_generation(resolution="480p", aspect_ratio="16:9", fast_mode=True)
         start = time.time()
         
         result = generator.generate_clip(
-            prompt="A ceramic coffee cup sits on a clean wooden table. Bright morning sunlight illuminates the cup from the side. Shallow depth of field. The camera slowly orbits around the cup. ",
+            prompt="A wide establishing shot in a cinematic thriller style captures a crumbling lighthouse perched on jagged coastal rocks, battered by a violent storm. The color palette is desaturated — deep grey-green ocean swells, near-black sky cracked by distant lightning, and the pale ivory stone of the tower slick with rain. Curtains of rain and sea spray create a layered atmospheric fog that partially veils the structure. A lone figure — a woman in her late 40s, silver-streaked hair plastered to her face, wearing a soaked yellow oilskin coat — grips the iron railing of the gallery deck, her knuckles white, jaw set with stubborn resolve rather than fear. The camera starts as a wide static frame from below sea level on the rocks, then slowly tilts upward, craning toward her silhouette against the churning sky until she fills the upper third of the frame, dwarfed only by the darkness behind her. ",
             output_path=output_path,
             duration=2.0,  # 2 seconds
             seed=42  # Reproducible

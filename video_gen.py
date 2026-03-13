@@ -458,8 +458,20 @@ def create_ltx2_generator(
     resolution: str = "480p",
     aspect_ratio: str = "16:9",
     fast_mode: bool = False,  # Default to quality mode (30 steps) for better results
+    cache_dir: Optional[str] = None,
 ) -> LTX2FastGenerator:
-    """Factory function to create LTX-2 generator with preset configurations."""
+    """Factory function to create LTX-2 generator with preset configurations.
+    
+    Args:
+        resolution: Video resolution (480p, 720p, 1080p, 4K)
+        aspect_ratio: "16:9" or "9:16"
+        fast_mode: Use faster generation settings
+        cache_dir: Directory to cache models (default: ./models/hf_cache)
+    """
+    # Default to local models folder for persistence
+    if cache_dir is None:
+        cache_dir = os.environ.get("LTX2_CACHE_DIR", "./models/hf_cache")
+    
     resolutions = {
         "480p": {"16:9": (704, 480), "9:16": (480, 704)},
         "720p": {"16:9": (1280, 704), "9:16": (704, 1280)},
@@ -495,7 +507,7 @@ def create_ltx2_generator(
     print(f"[LTX-2] Creating generator: {resolution} {aspect_ratio}")
     print(f"[LTX-2] Model CPU offload: {offload_status}")
     
-    return LTX2FastGenerator(config=config)
+    return LTX2FastGenerator(config=config, cache_dir=cache_dir)
 
 
 if __name__ == "__main__":
