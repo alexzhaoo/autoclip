@@ -70,7 +70,7 @@ class ProductionBRollAnalyzer:
         print(f"  ✅ Found {len(all_regions)} candidates, filtered to {len(filtered_regions)} optimal placements")
         return filtered_regions
     
-    def _apply_timing_constraints(self, regions: List[BRollRegion], min_spacing: float = 2.0) -> List[BRollRegion]:
+    def _apply_timing_constraints(self, regions: List[BRollRegion], min_spacing: float = 5.0) -> List[BRollRegion]:
         """Apply timing constraints: maintain spacing between B-rolls, limit duration
         
         Args:
